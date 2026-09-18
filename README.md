@@ -43,4 +43,5 @@ by walking the import graph.
 
 ## Status
 
-Skeleton only. No behaviour is implemented yet.
+Domain model, ports and scheduling are implemented and tested. No concrete
+network, database or model adapters yet.

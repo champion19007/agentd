@@ -17,6 +17,15 @@ func newRun(t *testing.T) *domain.Run {
 	return r
 }
 
+// sampleResult is a minimal extraction for tests that need to end a run
+// successfully.
+func sampleResult() domain.Extraction {
+	return domain.Extraction{
+		Kind:   domain.IntentScalar,
+		Scalar: domain.Value{Text: "49", Type: domain.TypeNumber},
+	}
+}
+
 // structuralFailure is a valid Failure for tests that need one.
 func structuralFailure() domain.Failure {
 	return domain.Failure{
@@ -96,11 +105,11 @@ func apply(r *domain.Run, to domain.RunState, ts time.Time) error {
 	case domain.StateRunning:
 		return r.Start(ts, 1)
 	case domain.StateQuiet:
-		return r.Quiet(ts, "sha256:deadbeef")
+		return r.Quiet(ts, "sha256:deadbeef", sampleResult())
 	case domain.StateChanged:
-		return r.Changed(ts, "sha256:deadbeef", "the price went up")
+		return r.Changed(ts, "sha256:deadbeef", sampleResult(), "the price went up")
 	case domain.StateDegraded:
-		return r.Degrade(ts, "sha256:deadbeef", domain.Failure{
+		return r.Degrade(ts, "sha256:deadbeef", sampleResult(), domain.Failure{
 			Class:   domain.ClassSemantic,
 			Summary: "the seat count was missing",
 		})
@@ -167,7 +176,7 @@ func TestDegradedIsNotFailed(t *testing.T) {
 	if err := degraded.Start(at(time.Second), 1); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if err := degraded.Degrade(at(2*time.Second), "sha256:abc", domain.Failure{
+	if err := degraded.Degrade(at(2*time.Second), "sha256:abc", sampleResult(), domain.Failure{
 		Class:   domain.ClassSemantic,
 		Summary: "the seat count was missing",
 	}); err != nil {
@@ -190,6 +199,31 @@ func TestDegradedIsNotFailed(t *testing.T) {
 	if failed.SnapshotID() != "" {
 		t.Error("a failed run has no usable result to point at")
 	}
+}
+
+// TestARunCanFailBeforeItStarts covers the misconfigured check: there was
+// nothing to run, and the honest record of that is a failed run rather than a
+// pending one left hanging forever.
+func TestARunCanFailBeforeItStarts(t *testing.T) {
+	r := newRun(t)
+
+	if err := r.Fail(at(time.Second), domain.Failure{
+		Class:   domain.ClassFatal,
+		Summary: "this check has no way of locating what it is looking for yet",
+	}); err != nil {
+		t.Fatalf("Fail from pending: %v", err)
+	}
+
+	if got := r.State(); got != domain.StateFailed {
+		t.Errorf("State = %q, want %q", got, domain.StateFailed)
+	}
+	if !r.StartedAt().IsZero() {
+		t.Error("a run that never started has a start time")
+	}
+	if r.EndedAt().IsZero() {
+		t.Error("a terminal run has no end time")
+	}
+	mustInvariants(t, r.CheckInvariants())
 }
 
 func TestInterruptedAndSkippedAreNotTheSourcesFault(t *testing.T) {

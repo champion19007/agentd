@@ -163,6 +163,12 @@ func (d Destination) Validate() error {
 // DefaultMaxRepairAttempts bounds repair work when a Policy does not.
 const DefaultMaxRepairAttempts = 3
 
+// DefaultMaxRetries bounds in-slot retries when a Policy does not. It is small
+// on purpose: a check that fails three times in a row is telling you
+// something, and hammering the source past that point is rude to it and
+// useless to the operator.
+const DefaultMaxRetries = 3
+
 // Policy is the per-check tuning the core consults when deciding what to do
 // about a failure.
 type Policy struct {
@@ -174,7 +180,18 @@ type Policy struct {
 	// RetainSnapshots is how many snapshots to keep per check. The most
 	// recent known-good snapshot is retained regardless of this number.
 	RetainSnapshots int
+
+	// MaxRetries bounds how many times a retryable failure is retried within
+	// one slot. Zero means DefaultMaxRetries.
+	MaxRetries int
+
+	// RetryBackoff is the first retry delay; each subsequent retry doubles
+	// it. Zero means DefaultRetryBackoff.
+	RetryBackoff time.Duration
 }
+
+// DefaultRetryBackoff is the first retry delay when a Policy does not set one.
+const DefaultRetryBackoff = 30 * time.Second
 
 // Attempts returns the effective repair budget.
 func (p Policy) Attempts() int {
@@ -182,6 +199,35 @@ func (p Policy) Attempts() int {
 		return DefaultMaxRepairAttempts
 	}
 	return p.MaxRepairAttempts
+}
+
+// Retries returns the effective in-slot retry budget.
+func (p Policy) Retries() int {
+	if p.MaxRetries <= 0 {
+		return DefaultMaxRetries
+	}
+	return p.MaxRetries
+}
+
+// Backoff returns the delay before the given retry attempt, counting from 1.
+// It doubles each time and is capped so that a long-running interval cannot
+// produce a retry scheduled past the end of the universe.
+func (p Policy) Backoff(attempt int) time.Duration {
+	base := p.RetryBackoff
+	if base <= 0 {
+		base = DefaultRetryBackoff
+	}
+	if attempt < 1 {
+		attempt = 1
+	}
+	d := base
+	for i := 1; i < attempt && d < time.Hour; i++ {
+		d *= 2
+	}
+	if d > time.Hour {
+		return time.Hour
+	}
+	return d
 }
 
 // Definition is one version of a Check's configuration. Definitions are

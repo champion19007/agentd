@@ -100,6 +100,11 @@ var allowedTransitions = map[RunState][]RunState{
 		// Never started: the runner was saturated, or shutdown arrived first.
 		StateSkippedOverload,
 		StateInterrupted,
+		// Also never started, but for a reason the operator must hear about:
+		// the check is misconfigured, or the store could not say how to run
+		// it. Recording that as a failed run rather than leaving a pending
+		// one is the honest account of what happened.
+		StateFailed,
 	},
 	StateRunning: {
 		StateQuiet,
@@ -145,6 +150,7 @@ type Run struct {
 	endedAt   time.Time
 
 	snapshotID  SnapshotID
+	result      Extraction
 	failure     *Failure
 	explanation string
 }
@@ -204,6 +210,10 @@ func (r *Run) EndedAt() time.Time   { return r.endedAt }
 // SnapshotID returns the snapshot this run captured, if any.
 func (r *Run) SnapshotID() SnapshotID { return r.snapshotID }
 
+// Result returns what this run extracted. It is the zero Extraction for a run
+// that never got that far.
+func (r *Run) Result() Extraction { return r.result }
+
 // Failure returns the classified failure that ended this run, if any. The
 // returned pointer is to a copy.
 func (r *Run) Failure() *Failure {
@@ -248,22 +258,25 @@ func (r *Run) Start(at time.Time, bindingVersion int) error {
 	return nil
 }
 
-// Quiet ends the run with nothing changed.
-func (r *Run) Quiet(at time.Time, snap SnapshotID) error {
+// Quiet ends the run with nothing changed. The result is still recorded: a
+// silence nobody can audit is not one an operator should trust.
+func (r *Run) Quiet(at time.Time, snap SnapshotID, result Extraction) error {
 	if err := r.transition(StateQuiet, at); err != nil {
 		return err
 	}
 	r.snapshotID = snap
+	r.result = result
 	r.explanation = "the source was checked and nothing changed"
 	return nil
 }
 
 // Changed ends the run with a difference found.
-func (r *Run) Changed(at time.Time, snap SnapshotID, explanation string) error {
+func (r *Run) Changed(at time.Time, snap SnapshotID, result Extraction, explanation string) error {
 	if err := r.transition(StateChanged, at); err != nil {
 		return err
 	}
 	r.snapshotID = snap
+	r.result = result
 	r.explanation = explanation
 	if !nonEmpty(r.explanation) {
 		r.explanation = "the source changed"
@@ -271,8 +284,10 @@ func (r *Run) Changed(at time.Time, snap SnapshotID, explanation string) error {
 	return nil
 }
 
-// Degrade ends the run with a usable but diminished result.
-func (r *Run) Degrade(at time.Time, snap SnapshotID, f Failure) error {
+// Degrade ends the run with a usable but diminished result. Whatever was
+// extracted is kept, because having part of an answer is the whole reason
+// this is not a failure.
+func (r *Run) Degrade(at time.Time, snap SnapshotID, result Extraction, f Failure) error {
 	if err := f.Validate(); err != nil {
 		return err
 	}
@@ -280,6 +295,7 @@ func (r *Run) Degrade(at time.Time, snap SnapshotID, f Failure) error {
 		return err
 	}
 	r.snapshotID = snap
+	r.result = result
 	r.failure = &f
 	r.explanation = f.Summary
 	return nil

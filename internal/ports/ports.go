@@ -123,6 +123,17 @@ type SecretResolver interface {
 	Resolve(ctx context.Context, refs []domain.SecretRef) (domain.SecretBundle, error)
 }
 
+// IDs mints identifiers for new aggregates.
+//
+// It is a port because the core may not reach for randomness or a clock, and
+// every practical identifier scheme needs one or the other. Injecting it also
+// means a test can mint predictable ids and assert on them.
+type IDs interface {
+	NewRunID() domain.RunID
+	NewIncidentID() domain.IncidentID
+	NewBindingID() domain.BindingID
+}
+
 // Reader is the read-only view of stored state. Every method is safe to call
 // concurrently and none of them changes anything.
 type Reader interface {
@@ -142,6 +153,12 @@ type Reader interface {
 
 	// RecentRuns returns a check's runs, newest first.
 	RecentRuns(ctx context.Context, id domain.CheckID, limit int) ([]*domain.Run, error)
+
+	// LastResult returns what the check most recently extracted successfully,
+	// which is what this run's result is compared against to tell a quiet run
+	// from a changed one. It returns ErrNotFound for a check that has never
+	// succeeded, and a first run is reported as changed rather than quiet.
+	LastResult(ctx context.Context, id domain.CheckID) (domain.Extraction, error)
 
 	// ActiveBinding returns the binding currently in force for a check.
 	ActiveBinding(ctx context.Context, id domain.CheckID) (domain.Binding, error)

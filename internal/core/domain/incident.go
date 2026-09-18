@@ -125,8 +125,13 @@ type RepairProposal struct {
 	// Rationale is the model's explanation, in the operator's terms.
 	Rationale string
 
-	// VerifiedAgainst is the known-good snapshot the candidate was replayed
-	// against to prove it reproduces the intent.
+	// VerifiedAgainst is the stored capture the candidate was replayed
+	// against.
+	//
+	// This is the current capture, not the known-good one. A repair is
+	// derived for the shape the source has now, so replaying it against the
+	// old capture would fail by construction. The known-good capture's role
+	// is to supply the result the candidate's output is compared to.
 	VerifiedAgainst SnapshotID
 
 	// VerifiedAt is when that replay happened.
