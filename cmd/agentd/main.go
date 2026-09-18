@@ -2,36 +2,25 @@
 // scheduled checks over external sources.
 //
 // This file is the composition root. It is the only place that knows about
-// both the core and every adapter: it constructs adapters, injects them into
-// the core through ports, and wires signal handling. No domain rules live
-// here.
+// both the core and every adapter, and its whole job is to construct adapters
+// and inject them through ports. No domain rule lives here.
 package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/champion19007/agentd/internal/cli"
 )
 
 func main() {
+	// A signalled shutdown cancels the context, which travels through every
+	// port: an in-flight fetch is abandoned, its run is recorded as
+	// interrupted rather than failed, and the database closes cleanly.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := run(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "agentd: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-func run(ctx context.Context) error {
-	// Wiring goes here once the core has something to wire:
-	//
-	//	clk   := clock.System{}
-	//	st, err := store.Open(cfg.DatabasePath)   // SQLite, WAL
-	//	sched := scheduling.New(clk, rng, st, ...)
-	//	return cli.Execute(ctx, sched, ...)
-	_ = ctx
-	return fmt.Errorf("not implemented: core wiring pending the architecture specification")
+	os.Exit(cli.Main(ctx, cli.DefaultEnv(), os.Args[1:]))
 }

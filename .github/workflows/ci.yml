@@ -1,0 +1,104 @@
+name: ci
+
+# The race detector is the reason this file exists.
+#
+# `go test -race` requires cgo and a C toolchain. Agentd ships with cgo off --
+# that is what makes it a single static binary with no runtime dependencies --
+# but the constraint governs the *release build*, not the test run. A Linux
+# runner has gcc, so CI is where the concurrency claims in the SQLite adapter
+# actually get checked: the single-writer discipline, the reader pool, and the
+# goroutines racing for one scheduling slot.
+#
+# The release job then builds with CGO_ENABLED=0 to prove the shipped artefact
+# still needs nothing.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (race)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Verify formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Verify dependencies are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      # CGO_ENABLED=1 here and only here. The race detector needs it; the
+      # binary does not.
+      - name: Test with the race detector
+        env:
+          CGO_ENABLED: 1
+        run: go test -race -count=1 ./...
+
+      # Concurrency bugs are often timing-dependent, so the tests that assert
+      # concurrent behaviour are run repeatedly rather than once.
+      - name: Stress the concurrency tests
+        env:
+          CGO_ENABLED: 1
+        run: go test -race -count=10 -run 'Concurrent|OnlyOneWriter|ReadsProceed|RacingForOneSlot' ./internal/store/sqlite/
+
+  build:
+    name: build (static, no cgo)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      # No cgo, every target. A build that needs a C toolchain here would mean
+      # the single-static-binary promise had quietly broken.
+      - name: Build
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -trimpath -ldflags "-s -w" -o /dev/null ./cmd/agentd
+
+  architecture:
+    name: architecture boundaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      # Run separately from the main suite so that a boundary violation is
+      # reported as its own failure rather than buried among test output.
+      - name: Check that the core stays free of I/O, time and adapters
+        run: go test -count=1 -v ./tests/

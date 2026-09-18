@@ -173,6 +173,9 @@ type Reader interface {
 	// Incidents returns the incident log for a check, which carries the
 	// at-most-one-open invariant with it.
 	Incidents(ctx context.Context, id domain.CheckID) (*domain.IncidentLog, error)
+
+	// AuditTrail returns recorded events, newest first.
+	AuditTrail(ctx context.Context, limit int) ([]domain.AuditEvent, error)
 }
 
 // Writer is the mutating half of the store, available only inside a
@@ -196,12 +199,18 @@ type Writer interface {
 	PutSnapshot(ctx context.Context, s domain.Snapshot) error
 
 	// MarkSnapshotKnownGood records that extraction succeeded against a
-	// snapshot.
-	MarkSnapshotKnownGood(ctx context.Context, id domain.SnapshotID) error
+	// capture.
+	//
+	// It takes a check as well as a content address because bodies are shared
+	// between checks that observe identical bytes, while known-good is a
+	// judgement one check made about its own extraction. Marking by address
+	// alone would let one check's success vouch for another's binding.
+	MarkSnapshotKnownGood(ctx context.Context, check domain.CheckID, id domain.SnapshotID) error
 
-	// DeleteSnapshots removes pruned snapshot bodies. The store must refuse
-	// to delete the last known-good snapshot for a check.
-	DeleteSnapshots(ctx context.Context, ids []domain.SnapshotID) error
+	// DeleteSnapshots drops a check's references to captures, and removes any
+	// body nothing points at any more. The store must refuse to delete a
+	// known-good capture.
+	DeleteSnapshots(ctx context.Context, check domain.CheckID, ids []domain.SnapshotID) error
 
 	// SaveBinding stores a binding version.
 	SaveBinding(ctx context.Context, b domain.Binding) error
@@ -213,6 +222,15 @@ type Writer interface {
 
 	// SaveIncident stores an incident and its attempts and proposal.
 	SaveIncident(ctx context.Context, i *domain.Incident) error
+
+	// AppendAudit records something that happened.
+	//
+	// It lives on Writer rather than on a port of its own so that an event
+	// commits in the same transaction as the change it describes. Recording
+	// "a human approved this" separately from the approval would mean a crash
+	// between the two leaves the trail lying, and a trail that can lie is
+	// worse than none.
+	AppendAudit(ctx context.Context, e domain.AuditEvent) error
 }
 
 // Tx is a unit of work: reads and writes that commit or roll back together.

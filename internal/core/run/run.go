@@ -234,12 +234,24 @@ func (o *Orchestrator) persist(ctx context.Context, out Outcome) error {
 			// A run that extracted cleanly proves this capture is one a
 			// repair can later be verified against.
 			if out.Run.State().Succeeded() {
-				if err := tx.MarkSnapshotKnownGood(ctx, out.Snapshot.ID()); err != nil {
+				if err := tx.MarkSnapshotKnownGood(ctx, out.Snapshot.CheckID(), out.Snapshot.ID()); err != nil {
 					return err
 				}
 			}
 		}
-		return tx.UpdateRun(ctx, out.Run)
+		if err := tx.UpdateRun(ctx, out.Run); err != nil {
+			return err
+		}
+		// In the same transaction as the run itself. A trail written
+		// separately could be left lying by a crash between the two writes.
+		return tx.AppendAudit(ctx, domain.Audit(
+			"run:"+string(out.Run.ID()),
+			out.Run.EndedAt(),
+			domain.ActionRunRecorded,
+			domain.SubjectRun,
+			string(out.Run.ID()),
+			string(out.Run.State())+": "+out.Run.Explanation(),
+		))
 	})
 }
 

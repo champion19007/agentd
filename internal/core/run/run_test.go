@@ -76,6 +76,7 @@ type memStore struct {
 	runs      map[domain.RunKey]*domain.Run
 	snapshots map[domain.SnapshotID]domain.Snapshot
 	knownGood map[domain.SnapshotID]bool
+	audit     []domain.AuditEvent
 	createErr error
 }
 
@@ -123,8 +124,17 @@ func (s *memStore) PutSnapshot(_ context.Context, snap domain.Snapshot) error {
 	return nil
 }
 
-func (s *memStore) MarkSnapshotKnownGood(_ context.Context, id domain.SnapshotID) error {
+func (s *memStore) MarkSnapshotKnownGood(_ context.Context, _ domain.CheckID, id domain.SnapshotID) error {
 	s.knownGood[id] = true
+	return nil
+}
+
+// AppendAudit records the event the orchestrator writes alongside every run.
+func (s *memStore) AppendAudit(_ context.Context, e domain.AuditEvent) error {
+	if err := e.Validate(); err != nil {
+		return err
+	}
+	s.audit = append(s.audit, e)
 	return nil
 }
 

@@ -141,7 +141,8 @@ func TestOpenCreatesSchema(t *testing.T) {
 	ctx := context.Background()
 
 	want := []string{
-		"checks", "check_versions", "bindings", "runs", "snapshots", "incidents",
+		"checks", "check_versions", "bindings", "runs", "snapshot_blobs",
+		"snapshot_refs", "incidents",
 		"repair_candidates", "verification_results", "repair_decisions",
 		"repair_diffs", "audit_events", "schema_migrations",
 	}
@@ -563,7 +564,7 @@ func TestSnapshotsAreDeduplicatedByContent(t *testing.T) {
 
 	var count int
 	if err := s.reader.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM snapshots WHERE tenant_id = ? AND check_id = 'chk-1'`, s.tenant).Scan(&count); err != nil {
+		`SELECT COUNT(*) FROM snapshot_refs WHERE tenant_id = ? AND check_id = 'chk-1'`, s.tenant).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 2 {
@@ -592,7 +593,7 @@ func TestSnapshotBodiesAreCompressedAndRoundTrip(t *testing.T) {
 		declared    int
 	)
 	if err := s.reader.QueryRowContext(ctx,
-		`SELECT compression, LENGTH(body), size_bytes FROM snapshots WHERE tenant_id = ? AND id = ?`,
+		`SELECT compression, LENGTH(body), size_bytes FROM snapshot_blobs WHERE tenant_id = ? AND id = ?`,
 		s.tenant, string(snap.ID())).Scan(&compression, &storedSize, &declared); err != nil {
 		t.Fatal(err)
 	}
@@ -637,7 +638,7 @@ func TestIncompressibleBodiesAreStoredAsIs(t *testing.T) {
 
 	var compression string
 	if err := s.reader.QueryRowContext(ctx,
-		`SELECT compression FROM snapshots WHERE tenant_id = ? AND id = ?`,
+		`SELECT compression FROM snapshot_blobs WHERE tenant_id = ? AND id = ?`,
 		s.tenant, string(snap.ID())).Scan(&compression); err != nil {
 		t.Fatal(err)
 	}
@@ -664,7 +665,7 @@ func TestReCapturingDoesNotDemoteAKnownGoodSnapshot(t *testing.T) {
 		if err := tx.PutSnapshot(ctx, snap); err != nil {
 			return err
 		}
-		return tx.MarkSnapshotKnownGood(ctx, snap.ID())
+		return tx.MarkSnapshotKnownGood(ctx, "chk-1", snap.ID())
 	}); err != nil {
 		t.Fatalf("storing: %v", err)
 	}
@@ -696,14 +697,14 @@ func TestDeleteSnapshotsRefusesKnownGood(t *testing.T) {
 		if err := tx.PutSnapshot(ctx, snap); err != nil {
 			return err
 		}
-		return tx.MarkSnapshotKnownGood(ctx, snap.ID())
+		return tx.MarkSnapshotKnownGood(ctx, "chk-1", snap.ID())
 	}); err != nil {
 		t.Fatalf("storing: %v", err)
 	}
 
 	// The store destroys data, so it does not take a caller's word for it.
 	err := s.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
-		return tx.DeleteSnapshots(ctx, []domain.SnapshotID{snap.ID()})
+		return tx.DeleteSnapshots(ctx, "chk-1", []domain.SnapshotID{snap.ID()})
 	})
 	if err == nil {
 		t.Fatal("DeleteSnapshots removed a known-good capture")
@@ -725,7 +726,7 @@ func TestGCKeepsTheLastKnownGoodSnapshot(t *testing.T) {
 		if err := tx.PutSnapshot(ctx, good); err != nil {
 			return err
 		}
-		return tx.MarkSnapshotKnownGood(ctx, good.ID())
+		return tx.MarkSnapshotKnownGood(ctx, "chk-1", good.ID())
 	}); err != nil {
 		t.Fatalf("storing: %v", err)
 	}
@@ -1326,6 +1327,7 @@ func TestRepairedBindingActivatesOnceApproved(t *testing.T) {
 		Rationale:       "the price moved into a new container",
 		VerifiedAgainst: "sha256:current",
 		VerifiedAt:      base.Add(time.Minute),
+		Gates:           passingGates(base.Add(time.Minute)),
 	}, base.Add(time.Minute)); err != nil {
 		t.Fatalf("Propose: %v", err)
 	}
@@ -1387,6 +1389,7 @@ func TestIncidentRoundTripsWithItsRepairHistory(t *testing.T) {
 		Rationale:       "the price moved into a span with a data-price attribute",
 		VerifiedAgainst: "sha256:current",
 		VerifiedAt:      base.Add(2 * time.Minute),
+		Gates:           passingGates(base.Add(2 * time.Minute)),
 	}, base.Add(2*time.Minute)); err != nil {
 		t.Fatalf("Propose: %v", err)
 	}
@@ -1453,6 +1456,7 @@ func TestApprovalSurvivesReload(t *testing.T) {
 	if err := inc.Propose(domain.RepairProposal{
 		Binding: repaired, Rationale: "it moved",
 		VerifiedAgainst: "sha256:current", VerifiedAt: base.Add(time.Minute),
+		Gates: passingGates(base.Add(time.Minute)),
 	}, base.Add(time.Minute)); err != nil {
 		t.Fatalf("Propose: %v", err)
 	}
@@ -1527,7 +1531,7 @@ func TestSnapshotIndexRoundTrips(t *testing.T) {
 		if err := tx.PutSnapshot(ctx, other); err != nil {
 			return err
 		}
-		return tx.MarkSnapshotKnownGood(ctx, good.ID())
+		return tx.MarkSnapshotKnownGood(ctx, "chk-1", good.ID())
 	}); err != nil {
 		t.Fatalf("storing: %v", err)
 	}
@@ -1558,23 +1562,23 @@ func TestAuditTrailRoundTrips(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 
-	if err := s.WithTx(ctx, func(ctx context.Context, t2 ports.Tx) error {
-		return t2.(tx).AppendAudit(ctx, AuditEvent{
-			ID: "evt-1", At: base, Actor: "dana", Action: "approve_repair",
-			SubjectKind: "incident", SubjectID: "inc-1", Detail: "approved version 2",
-		})
+	if err := s.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
+		return tx.AppendAudit(ctx, domain.AuditBy(
+			"evt-1", base, "dana", domain.ActionRepairApproved,
+			domain.SubjectIncident, "inc-1", "approved version 2",
+		))
 	}); err != nil {
 		t.Fatalf("AppendAudit: %v", err)
 	}
 
-	events, err := s.Audit(ctx, 10)
+	events, err := s.AuditTrail(ctx, 10)
 	if err != nil {
-		t.Fatalf("Audit: %v", err)
+		t.Fatalf("AuditTrail: %v", err)
 	}
 	if len(events) != 1 {
 		t.Fatalf("%d events, want 1", len(events))
 	}
-	if events[0].Actor != "dana" || events[0].Action != "approve_repair" {
+	if events[0].Actor != "dana" || events[0].Action != domain.ActionRepairApproved {
 		t.Errorf("event = %+v, want the one that was written", events[0])
 	}
 	if !events[0].At.Equal(base) {
@@ -1582,57 +1586,308 @@ func TestAuditTrailRoundTrips(t *testing.T) {
 	}
 }
 
+// TestAuditRefusesToAttributeAHumanActionToAgentd is the guard that keeps the
+// trail honest. If Agentd could write "approved by agentd", the record would
+// no longer distinguish a decision a person made from one it made itself --
+// which is the only thing the trail exists to prove.
+func TestAuditRefusesToAttributeAHumanActionToAgentd(t *testing.T) {
+	s := newStore(t)
+
+	err := s.WithTx(context.Background(), func(ctx context.Context, tx ports.Tx) error {
+		return tx.AppendAudit(ctx, domain.Audit(
+			"evt-bad", base, domain.ActionRepairApproved,
+			domain.SubjectIncident, "inc-1", "approved itself",
+		))
+	})
+	if err == nil {
+		t.Fatal("Agentd recorded itself approving a repair")
+	}
+}
+
+func TestAuditCommitsWithTheChangeItDescribes(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	boom := errors.New("the write failed after the audit row")
+	_ = s.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
+		if err := tx.AppendAudit(ctx, domain.Audit(
+			"evt-1", base, domain.ActionCheckCreated,
+			domain.SubjectCheck, "chk-1", "created",
+		)); err != nil {
+			return err
+		}
+		return boom
+	})
+
+	// The trail must roll back with everything else. A trail that survives a
+	// rolled-back change is worse than no trail: it asserts something that did
+	// not happen.
+	events, err := s.AuditTrail(ctx, 10)
+	if err != nil {
+		t.Fatalf("AuditTrail: %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("%d events survived a rolled-back transaction, want 0", len(events))
+	}
+}
+
+// TestEditedThenApprovedRepairKeepsBothSides covers the path where an operator
+// corrects a proposal before approving it. Both versions are kept, because the
+// gap between what Agentd suggested and what a human actually accepted is the
+// only honest measure of how well Agentd understands a source.
 func TestEditedThenApprovedRepairKeepsBothSides(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
 	saveCheck(t, s, scalarCheck(t, "chk-1"))
 
 	inc := openIncident(t, "inc-1", "chk-1")
-	inc.RecordAttempt(domain.AttemptProposed, "found one", base.Add(time.Minute))
-	if err := s.WithTx(ctx, func(ctx context.Context, tx2 ports.Tx) error {
-		if err := tx2.SaveIncident(ctx, inc); err != nil {
+	if _, err := inc.RecordAttempt(domain.AttemptProposed, "found a candidate", base.Add(time.Minute)); err != nil {
+		t.Fatalf("RecordAttempt: %v", err)
+	}
+
+	repaired := binding("chk-1", 2, domain.OriginRepaired)
+	repaired.Locators = []domain.Locator{{Target: "price", Dialect: "css", Expression: "[data-price]"}}
+	if err := inc.Propose(domain.RepairProposal{
+		Binding:         repaired,
+		Rationale:       "the price moved into a span with a data-price attribute",
+		VerifiedAgainst: "sha256:current",
+		VerifiedAt:      base.Add(time.Minute),
+		Gates:           passingGates(base.Add(time.Minute)),
+	}, base.Add(time.Minute)); err != nil {
+		t.Fatalf("Propose: %v", err)
+	}
+
+	// The operator knows the page and narrows the selector before accepting.
+	corrected := []domain.Locator{{Target: "price", Dialect: "css", Expression: ".plan--standard .price"}}
+	if err := inc.ApproveWithEdits("dana", corrected, base.Add(time.Hour)); err != nil {
+		t.Fatalf("ApproveWithEdits: %v", err)
+	}
+
+	if err := s.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
+		if err := tx.SaveBinding(ctx, inc.Proposal().Binding); err != nil {
 			return err
 		}
-		return tx2.(tx).RecordRepairEdit(ctx, RepairEdit{
-			ID: "diff-1", IncidentID: "inc-1", AttemptNumber: 1,
-			Proposed: []domain.Locator{{Target: "price", Dialect: "css", Expression: "[data-price]"}},
-			Approved: []domain.Locator{{Target: "price", Dialect: "css", Expression: ".plan .price"}},
-			EditedBy: "dana", EditedAt: base.Add(time.Hour),
-		})
+		return tx.SaveIncident(ctx, inc)
 	}); err != nil {
-		t.Fatalf("RecordRepairEdit: %v", err)
+		t.Fatalf("SaveIncident: %v", err)
 	}
 
 	var proposed, approved, by string
 	if err := s.reader.QueryRowContext(ctx,
 		`SELECT proposed_locators_json, approved_locators_json, edited_by
-		   FROM repair_diffs WHERE tenant_id = ? AND id = 'diff-1'`, s.tenant).
+		   FROM repair_diffs WHERE tenant_id = ? AND incident_id = 'inc-1'`, s.tenant).
 		Scan(&proposed, &approved, &by); err != nil {
 		t.Fatalf("reading the diff: %v", err)
 	}
-
-	// Both sides, because what Agentd suggested and what the human approved
-	// are different facts, and the difference is the useful part.
 	if !strings.Contains(proposed, "data-price") {
-		t.Errorf("the proposal was not kept: %s", proposed)
+		t.Errorf("Agentd's suggestion was not kept: %s", proposed)
 	}
-	if !strings.Contains(approved, ".plan .price") {
+	if !strings.Contains(approved, "plan--standard") {
 		t.Errorf("the approved version was not kept: %s", approved)
 	}
 	if by != "dana" {
 		t.Errorf("edited_by = %q, want dana", by)
 	}
+
+	// And it survives a reload with both sides intact.
+	log, err := s.Incidents(ctx, "chk-1")
+	if err != nil {
+		t.Fatalf("Incidents: %v", err)
+	}
+	got, _ := log.Current()
+	if got == nil {
+		all := log.All()
+		got = all[len(all)-1]
+	}
+	p := got.Proposal()
+	if !p.Edited {
+		t.Error("the reloaded proposal does not know it was edited")
+	}
+	if len(p.ProposedLocators) != 1 || p.ProposedLocators[0].Expression != "[data-price]" {
+		t.Errorf("ProposedLocators = %+v, want Agentd's original suggestion", p.ProposedLocators)
+	}
+	if p.Binding.Locators[0].Expression != ".plan--standard .price" {
+		t.Errorf("the applied locator is %q, want the operator's correction", p.Binding.Locators[0].Expression)
+	}
 }
 
-func TestRepairEditMustNameTheEditor(t *testing.T) {
+func TestVerificationGatesRoundTrip(t *testing.T) {
 	s := newStore(t)
 	ctx := context.Background()
+	saveCheck(t, s, scalarCheck(t, "chk-1"))
 
-	err := s.WithTx(ctx, func(ctx context.Context, t2 ports.Tx) error {
-		return t2.(tx).RecordRepairEdit(ctx, RepairEdit{ID: "diff-1", IncidentID: "inc-1"})
-	})
-	if err == nil {
-		t.Error("an anonymous edit was recorded")
+	inc := openIncident(t, "inc-1", "chk-1")
+	inc.RecordAttempt(domain.AttemptProposed, "found one", base.Add(time.Minute))
+	repaired := binding("chk-1", 2, domain.OriginRepaired)
+	gates := passingGates(base.Add(time.Minute))
+	if err := inc.Propose(domain.RepairProposal{
+		Binding: repaired, Rationale: "it moved",
+		VerifiedAgainst: "sha256:current", VerifiedAt: base.Add(time.Minute),
+		Gates: gates,
+	}, base.Add(time.Minute)); err != nil {
+		t.Fatalf("Propose: %v", err)
+	}
+
+	if err := s.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
+		if err := tx.SaveBinding(ctx, repaired); err != nil {
+			return err
+		}
+		return tx.SaveIncident(ctx, inc)
+	}); err != nil {
+		t.Fatalf("SaveIncident: %v", err)
+	}
+
+	log, err := s.Incidents(ctx, "chk-1")
+	if err != nil {
+		t.Fatalf("Incidents: %v", err)
+	}
+	got, _ := log.Current()
+
+	// Each gate separately, because "it failed verification" is not an answer
+	// anyone can act on.
+	if n := len(got.Proposal().Gates); n != len(gates) {
+		t.Fatalf("%d gates survived, want %d", n, len(gates))
+	}
+	seen := map[domain.Gate]bool{}
+	for _, g := range got.Proposal().Gates {
+		if !g.Passed {
+			t.Errorf("gate %q came back failed", g.Gate)
+		}
+		if g.Detail == "" {
+			t.Errorf("gate %q came back with no explanation", g.Gate)
+		}
+		seen[g.Gate] = true
+	}
+	for _, want := range domain.RequiredGates {
+		if !seen[want] {
+			t.Errorf("the %q gate did not survive the round trip", want)
+		}
+	}
+}
+
+// passingGates builds a full set of passing verdicts.
+func passingGates(at time.Time) []domain.GateResult {
+	var out []domain.GateResult
+	for _, g := range domain.RequiredGates {
+		out = append(out, domain.GateResult{Gate: g, Passed: true, Detail: "checked", At: at})
+	}
+	return out
+}
+
+func TestSnapshotBodiesAreSharedBetweenChecks(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	saveCheck(t, s, scalarCheck(t, "chk-1"))
+	saveCheck(t, s, scalarCheck(t, "chk-2"))
+
+	// Two checks watching the same status page see identical bytes.
+	body := "<html><body>all systems operational</body></html>"
+	one := snapshot(t, "chk-1", body, 0)
+	two := snapshot(t, "chk-2", body, time.Minute)
+	if one.ID() != two.ID() {
+		t.Fatal("identical bytes produced different content addresses")
+	}
+
+	if err := s.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
+		if err := tx.PutSnapshot(ctx, one); err != nil {
+			return err
+		}
+		return tx.PutSnapshot(ctx, two)
+	}); err != nil {
+		t.Fatalf("PutSnapshot: %v", err)
+	}
+
+	var blobs, refs int
+	if err := s.reader.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM snapshot_blobs WHERE tenant_id = ?`, s.tenant).Scan(&blobs); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.reader.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM snapshot_refs WHERE tenant_id = ?`, s.tenant).Scan(&refs); err != nil {
+		t.Fatal(err)
+	}
+	if blobs != 1 {
+		t.Errorf("%d bodies stored, want 1: identical bytes should be stored once", blobs)
+	}
+	if refs != 2 {
+		t.Errorf("%d references stored, want 2: each check keeps its own", refs)
+	}
+}
+
+// TestDroppingOneReferenceKeepsTheBodyForTheOther is why sharing needs
+// counting. One check pruning a capture must not take it away from another
+// check still pointing at those exact bytes.
+func TestDroppingOneReferenceKeepsTheBodyForTheOther(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	saveCheck(t, s, scalarCheck(t, "chk-1"))
+	saveCheck(t, s, scalarCheck(t, "chk-2"))
+
+	body := "<html>shared</html>"
+	one := snapshot(t, "chk-1", body, 0)
+	two := snapshot(t, "chk-2", body, time.Minute)
+
+	if err := s.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
+		if err := tx.PutSnapshot(ctx, one); err != nil {
+			return err
+		}
+		return tx.PutSnapshot(ctx, two)
+	}); err != nil {
+		t.Fatalf("PutSnapshot: %v", err)
+	}
+
+	if err := s.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
+		return tx.DeleteSnapshots(ctx, "chk-1", []domain.SnapshotID{one.ID()})
+	}); err != nil {
+		t.Fatalf("DeleteSnapshots: %v", err)
+	}
+
+	// chk-2 can still read it.
+	if _, err := s.Snapshot(ctx, two.ID()); err != nil {
+		t.Fatalf("the shared body went away with the first reference: %v", err)
+	}
+	index, err := s.Snapshots(ctx, "chk-2")
+	if err != nil {
+		t.Fatalf("Snapshots: %v", err)
+	}
+	if index.Len() != 1 {
+		t.Errorf("chk-2 has %d captures, want 1", index.Len())
+	}
+
+	// And chk-1 no longer does.
+	one1, err := s.Snapshots(ctx, "chk-1")
+	if err != nil {
+		t.Fatalf("Snapshots: %v", err)
+	}
+	if one1.Len() != 0 {
+		t.Errorf("chk-1 has %d captures, want 0", one1.Len())
+	}
+}
+
+func TestTheLastReferenceTakesTheBodyWithIt(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	saveCheck(t, s, scalarCheck(t, "chk-1"))
+	snap := snapshot(t, "chk-1", "<html>only</html>", 0)
+
+	if err := s.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
+		return tx.PutSnapshot(ctx, snap)
+	}); err != nil {
+		t.Fatalf("PutSnapshot: %v", err)
+	}
+	if err := s.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
+		return tx.DeleteSnapshots(ctx, "chk-1", []domain.SnapshotID{snap.ID()})
+	}); err != nil {
+		t.Fatalf("DeleteSnapshots: %v", err)
+	}
+
+	var blobs int
+	if err := s.reader.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM snapshot_blobs WHERE tenant_id = ?`, s.tenant).Scan(&blobs); err != nil {
+		t.Fatal(err)
+	}
+	if blobs != 0 {
+		t.Errorf("%d bodies left after the last reference went, want 0", blobs)
 	}
 }
 

@@ -112,6 +112,76 @@ const (
 	ApprovalRejected ApprovalState = "rejected"
 )
 
+// Gate is one check a candidate binding must pass before a human is asked to
+// look at it.
+//
+// The gates are recorded individually rather than collapsed into one pass or
+// fail because "it failed verification" is not an answer anybody can act on.
+// An operator deciding whether to trust the next proposal wants to know
+// whether the candidate was malformed, or found nothing, or found the wrong
+// thing -- those are three different stories about how well Agentd understands
+// their source.
+type Gate string
+
+const (
+	// GateWellFormed: the candidate is a valid binding at all.
+	GateWellFormed Gate = "well_formed"
+	// GateCovers: it has a locator for every target the intent requires.
+	GateCovers Gate = "covers_intent"
+	// GateReplays: it ran against the stored capture without erroring.
+	GateReplays Gate = "replays"
+	// GateSatisfies: what it extracted satisfies the intent.
+	GateSatisfies Gate = "satisfies_intent"
+	// GateShape: what it extracted looks like what the check used to get.
+	// This is the gate that catches a locator pointing at the wrong element
+	// of the right type, which every other gate would wave through.
+	GateShape Gate = "matches_previous_shape"
+)
+
+// RequiredGates are the gates every proposal must have passed. GateShape is
+// not among them: a check with no stored previous result has nothing to
+// compare against, and refusing to help such a check would be worse than
+// proposing a repair that has passed everything else.
+var RequiredGates = []Gate{GateWellFormed, GateCovers, GateReplays, GateSatisfies}
+
+// Valid reports whether g is a known gate.
+func (g Gate) Valid() bool {
+	switch g {
+	case GateWellFormed, GateCovers, GateReplays, GateSatisfies, GateShape:
+		return true
+	}
+	return false
+}
+
+// GateResult is one gate's verdict.
+type GateResult struct {
+	Gate   Gate
+	Passed bool
+	// Detail explains the verdict in the operator's terms.
+	Detail string
+	At     time.Time
+}
+
+// gatesPassed reports whether every required gate is present and passed.
+func gatesPassed(results []GateResult) error {
+	seen := make(map[Gate]bool, len(results))
+	for _, r := range results {
+		if !r.Gate.Valid() {
+			return invalidf("proposal carries unknown verification gate %q", r.Gate)
+		}
+		if !r.Passed {
+			return invalidf("proposal failed the %q gate: %s", r.Gate, r.Detail)
+		}
+		seen[r.Gate] = true
+	}
+	for _, g := range RequiredGates {
+		if !seen[g] {
+			return invalidf("proposal was never checked against the %q gate", g)
+		}
+	}
+	return nil
+}
+
 // RepairProposal is a candidate binding that has been verified against stored
 // evidence and is waiting for a human decision.
 //
@@ -136,6 +206,20 @@ type RepairProposal struct {
 
 	// VerifiedAt is when that replay happened.
 	VerifiedAt time.Time
+
+	// Gates are the verdicts of every check the candidate had to pass.
+	// Validate refuses a proposal that is missing one or failed one, so an
+	// unverified candidate cannot reach an operator as a suggestion.
+	Gates []GateResult
+
+	// ProposedLocators is what Agentd suggested, kept separately from the
+	// binding's own locators so that an edit does not erase the suggestion.
+	// What Agentd proposed and what a human approved are different facts, and
+	// the difference is the interesting one.
+	ProposedLocators []Locator
+
+	// Edited reports whether a human changed the locators before approving.
+	Edited bool
 
 	// Approval is the human decision, pending until one is made.
 	Approval ApprovalState
@@ -163,6 +247,9 @@ func (p RepairProposal) Validate() error {
 	}
 	if !nonEmpty(p.Rationale) {
 		return invalidf("a repair proposal must explain itself to the operator")
+	}
+	if err := gatesPassed(p.Gates); err != nil {
+		return err
 	}
 	return nil
 }
@@ -298,6 +385,9 @@ func (i *Incident) Propose(p RepairProposal, at time.Time) error {
 	p.Approval = ApprovalPending
 	p.ApprovedBy = ""
 	p.DecidedAt = time.Time{}
+	p.Edited = false
+	// Remember the suggestion before anyone can change it.
+	p.ProposedLocators = append([]Locator(nil), p.Binding.Locators...)
 	i.proposal = &p
 	i.state = IncidentAwaitingApproval
 	return nil
@@ -320,6 +410,61 @@ func (i *Incident) Approve(by string, at time.Time) error {
 	i.proposal.ApprovedBy = by
 	i.proposal.DecidedAt = at.UTC()
 	return nil
+}
+
+// ApproveWithEdits records an approval of a proposal the operator changed
+// first.
+//
+// This is the common case in practice and the one most worth modelling
+// honestly: Agentd found roughly the right place, a person who knows the
+// source corrected it, and the corrected version is what gets applied. What
+// Agentd suggested is kept in ProposedLocators, because the gap between the
+// two is the only honest measure of how well Agentd understands this source.
+//
+// The edited locators are not re-verified here. They were written by a person
+// who can see the page, and demanding that a human's correction pass Agentd's
+// own gates would be Agentd second-guessing the authority it just deferred to.
+// The audit trail records that they were edited and by whom.
+func (i *Incident) ApproveWithEdits(by string, locators []Locator, at time.Time) error {
+	if !i.state.Open() {
+		return ErrIncidentClosed
+	}
+	if i.proposal == nil {
+		return ErrNoProposal
+	}
+	if !nonEmpty(by) {
+		return invalidf("an approval must name the person who gave it")
+	}
+	if len(locators) == 0 {
+		return invalidf("an edited repair needs at least one locator")
+	}
+	for _, l := range locators {
+		if err := l.Validate(); err != nil {
+			return err
+		}
+	}
+
+	edited := append([]Locator(nil), locators...)
+	i.proposal.Binding.Locators = edited
+	i.proposal.Edited = !sameLocators(i.proposal.ProposedLocators, edited)
+	i.proposal.Approval = ApprovalApproved
+	i.proposal.ApprovedBy = by
+	i.proposal.DecidedAt = at.UTC()
+	return nil
+}
+
+// sameLocators reports whether two locator lists are identical, so that an
+// "edit" that changed nothing is not recorded as one.
+func sameLocators(a, b []Locator) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // Reject records a human's refusal and abandons the incident. The check stays

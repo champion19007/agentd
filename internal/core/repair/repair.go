@@ -12,7 +12,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/champion19007/agentd/internal/core/domain"
 	"github.com/champion19007/agentd/internal/ports"
@@ -97,7 +99,8 @@ func (o *Orchestrator) Propose(ctx context.Context, c *domain.Check, i *domain.I
 		DerivedFrom: ev.current.ID(),
 	}
 
-	if err := o.verify(ctx, def.Intent, candidate, ev); err != nil {
+	gates, err := o.verify(ctx, def.Intent, candidate, ev, now)
+	if err != nil {
 		if _, rerr := i.RecordAttempt(domain.AttemptUnverified, explainVerifyFailure(err), now); rerr != nil {
 			return nil, rerr
 		}
@@ -114,6 +117,7 @@ func (o *Orchestrator) Propose(ctx context.Context, c *domain.Check, i *domain.I
 		// The capture the candidate was actually replayed against.
 		VerifiedAgainst: ev.current.ID(),
 		VerifiedAt:      now,
+		Gates:           gates,
 	}
 	if err := i.Propose(proposal, now); err != nil {
 		return nil, err
@@ -125,7 +129,20 @@ func (o *Orchestrator) Propose(ctx context.Context, c *domain.Check, i *domain.I
 		if err := tx.SaveBinding(ctx, candidate); err != nil {
 			return err
 		}
-		return tx.SaveIncident(ctx, i)
+		if err := tx.SaveIncident(ctx, i); err != nil {
+			return err
+		}
+		// Attributed to Agentd, because Agentd did this part. The approval
+		// that follows will be attributed to a person, and the two rows side
+		// by side are the whole story.
+		return tx.AppendAudit(ctx, domain.Audit(
+			"proposal:"+string(i.ID())+":"+string(candidate.ID),
+			now,
+			domain.ActionRepairProposed,
+			domain.SubjectIncident,
+			string(i.ID()),
+			"proposed binding version "+itoa(candidate.Version)+", awaiting approval",
+		))
 	}); err != nil {
 		return nil, err
 	}
@@ -197,34 +214,65 @@ func (o *Orchestrator) evidence(ctx context.Context, id domain.CheckID) (evidenc
 	return ev, nil
 }
 
-// verify replays the candidate against the current capture and checks what
-// comes out. It is the step that makes a proposal worth showing to a human.
-func (o *Orchestrator) verify(ctx context.Context, in domain.Intent, candidate domain.Binding, ev evidence) error {
+// verify runs the candidate through each gate in turn and returns the verdicts.
+//
+// Gates are recorded individually rather than collapsed into one pass or fail
+// because "it failed verification" is not something anyone can act on. An
+// operator weighing the next proposal wants to know whether the candidate was
+// malformed, or found nothing, or found the wrong thing: three different
+// stories about how well Agentd understands their source.
+//
+// The first failure stops the run. Later gates assume earlier ones held, and
+// reporting a shape mismatch for a candidate that never parsed would be noise.
+func (o *Orchestrator) verify(ctx context.Context, in domain.Intent, candidate domain.Binding, ev evidence, now time.Time) ([]domain.GateResult, error) {
+	var gates []domain.GateResult
+
+	// fail records a verdict and wraps the reason for the caller.
+	fail := func(g domain.Gate, reason string) ([]domain.GateResult, error) {
+		gates = append(gates, domain.GateResult{Gate: g, Passed: false, Detail: reason, At: now})
+		return gates, fmt.Errorf("%w: %s", ErrNotVerified, reason)
+	}
+	pass := func(g domain.Gate, detail string) {
+		gates = append(gates, domain.GateResult{Gate: g, Passed: true, Detail: detail, At: now})
+	}
+
 	if err := candidate.Validate(); err != nil {
-		return fmt.Errorf("%w: %s", ErrNotVerified, err)
+		return fail(domain.GateWellFormed, err.Error())
 	}
+	pass(domain.GateWellFormed, "the candidate is a well formed binding")
+
 	if err := candidate.Covers(in); err != nil {
-		return fmt.Errorf("%w: %s", ErrNotVerified, err)
+		return fail(domain.GateCovers, err.Error())
 	}
+	pass(domain.GateCovers, "it has a way of finding everything this check asks for")
 
 	got, err := o.deps.Extract.Extract(ctx, rawFrom(ev.current), candidate)
 	if err != nil {
-		return fmt.Errorf("%w: it failed to run against the stored capture", ErrNotVerified)
+		return fail(domain.GateReplays, "it failed to run against the stored capture")
 	}
+	pass(domain.GateReplays, "it ran against the stored capture without error")
+
 	if f := got.Satisfies(in); f != nil {
-		return fmt.Errorf("%w: %s", ErrNotVerified, f.Summary)
+		return fail(domain.GateSatisfies, f.Summary)
 	}
+	pass(domain.GateSatisfies, "what it found satisfies this check")
 
 	// Satisfying the intent proves the candidate finds something of the right
 	// shape. It does not prove it found the right thing: a locator pointing at
-	// the wrong element of the right kind would pass. Comparing against what
-	// the check used to see is what catches that.
+	// the wrong element of the right kind would pass everything above.
+	// Comparing against what the check used to see is what catches that.
+	//
+	// A check with no stored previous result skips this gate rather than
+	// failing it. Refusing to help a check that has never recorded a result
+	// would be worse than proposing a repair that passed everything else.
 	if ev.hasExpected {
 		if err := sameShape(ev.expected, got); err != nil {
-			return fmt.Errorf("%w: %s", ErrNotVerified, err)
+			return fail(domain.GateShape, err.Error())
 		}
+		pass(domain.GateShape, "what it found looks like what this check used to get")
 	}
-	return nil
+
+	return gates, nil
 }
 
 // sameShape reports whether a candidate's result is recognisably the same
@@ -378,3 +426,7 @@ func explainVerifyFailure(err error) string {
 	return "a candidate was found but it did not reproduce what this check asks for: " +
 		strings.TrimPrefix(strings.TrimPrefix(err.Error(), ErrNotVerified.Error()), ": ")
 }
+
+// itoa keeps the audit detail readable without dragging strconv through the
+// rest of the file.
+func itoa(n int) string { return strconv.Itoa(n) }

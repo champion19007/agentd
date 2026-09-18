@@ -98,7 +98,7 @@ func (s *Store) gcSnapshots(ctx context.Context, id domain.CheckID, policy domai
 	}
 
 	if err := s.WithTx(ctx, func(ctx context.Context, tx ports.Tx) error {
-		return tx.DeleteSnapshots(ctx, expired)
+		return tx.DeleteSnapshots(ctx, id, expired)
 	}); err != nil {
 		return 0, err
 	}

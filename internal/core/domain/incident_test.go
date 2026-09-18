@@ -21,7 +21,19 @@ func proposal() domain.RepairProposal {
 		Rationale:       "the price moved into a new container; this locator finds it again",
 		VerifiedAgainst: "sha256:knowngood",
 		VerifiedAt:      at(time.Minute),
+		Gates:           passingGates(at(time.Minute)),
 	}
+}
+
+// passingGates builds a full set of passing verdicts, which a proposal needs
+// before the domain will accept it. That refusal is the point: an unverified
+// candidate must not be able to reach an operator as a suggestion.
+func passingGates(at time.Time) []domain.GateResult {
+	var out []domain.GateResult
+	for _, g := range domain.RequiredGates {
+		out = append(out, domain.GateResult{Gate: g, Passed: true, Detail: "checked", At: at})
+	}
+	return out
 }
 
 func openIncident(t *testing.T) (*domain.IncidentLog, *domain.Incident) {

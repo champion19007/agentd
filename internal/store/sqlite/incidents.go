@@ -111,6 +111,58 @@ func (x q) SaveIncident(ctx context.Context, i *domain.Incident) error {
 		}
 	}
 
+	// Gate results for the candidate that produced the standing proposal.
+	// They are stored one row per gate so that "it failed verification" can
+	// always be answered with which gate and why.
+	if proposal != nil {
+		if attempt := proposedAttempt(i); attempt > 0 {
+			cid := candidateID(i.ID(), attempt)
+			for _, g := range proposal.Gates {
+				if _, err := x.db.ExecContext(ctx, `
+					INSERT INTO verification_results (tenant_id, id, incident_id, candidate_id,
+						gate, passed, detail, verified_against, verified_at)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+					ON CONFLICT (tenant_id, id) DO UPDATE SET
+						passed = excluded.passed, detail = excluded.detail`,
+					x.tenant, cid+"!"+string(g.Gate), string(i.ID()), cid,
+					string(g.Gate), boolToInt(g.Passed), g.Detail,
+					string(proposal.VerifiedAgainst), mustEncodeTime(g.At),
+				); err != nil {
+					return fmt.Errorf("sqlite: saving %q gate of incident %q: %w", g.Gate, i.ID(), err)
+				}
+			}
+
+			// An edited proposal keeps both sides. What Agentd suggested and
+			// what the operator approved are different facts, and the gap
+			// between them is the only honest measure of how well Agentd
+			// understands this source.
+			if proposal.Edited {
+				proposedJSON, err := encodeJSON(proposal.ProposedLocators)
+				if err != nil {
+					return err
+				}
+				approvedJSON, err := encodeJSON(proposal.Binding.Locators)
+				if err != nil {
+					return err
+				}
+				if _, err := x.db.ExecContext(ctx, `
+					INSERT INTO repair_diffs (tenant_id, id, incident_id, candidate_id,
+						proposed_locators_json, approved_locators_json, edited_by, edited_at)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+					ON CONFLICT (tenant_id, id) DO UPDATE SET
+						approved_locators_json = excluded.approved_locators_json,
+						edited_by              = excluded.edited_by,
+						edited_at              = excluded.edited_at`,
+					x.tenant, cid+"!edit", string(i.ID()), cid,
+					proposedJSON, approvedJSON, proposal.ApprovedBy,
+					mustEncodeTime(proposal.DecidedAt),
+				); err != nil {
+					return fmt.Errorf("sqlite: saving edited repair for incident %q: %w", i.ID(), err)
+				}
+			}
+		}
+	}
+
 	// A decision only exists once a human has made one.
 	if proposal != nil && proposal.Approval != domain.ApprovalPending {
 		attempt := proposedAttempt(i)
@@ -293,17 +345,86 @@ func (x q) repairHistory(ctx context.Context, id domain.IncidentID) ([]domain.Re
 	}
 
 	proposal := &domain.RepairProposal{
-		Binding:         binding,
-		Rationale:       rationale,
-		VerifiedAgainst: verifiedFrom,
-		VerifiedAt:      verifiedAt,
-		Approval:        domain.ApprovalPending,
+		Binding:          binding,
+		Rationale:        rationale,
+		VerifiedAgainst:  verifiedFrom,
+		VerifiedAt:       verifiedAt,
+		Approval:         domain.ApprovalPending,
+		ProposedLocators: append([]domain.Locator(nil), binding.Locators...),
 	}
 
+	gates, err := x.gates(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	proposal.Gates = gates
+
+	if err := x.edit(ctx, id, proposal); err != nil {
+		return nil, nil, err
+	}
 	if err := x.decision(ctx, id, proposal); err != nil {
 		return nil, nil, err
 	}
 	return attempts, proposal, nil
+}
+
+// gates reads the verdicts a candidate was checked against.
+func (x q) gates(ctx context.Context, id domain.IncidentID) ([]domain.GateResult, error) {
+	rows, err := x.db.QueryContext(ctx, `
+		SELECT gate, passed, detail, verified_at
+		  FROM verification_results
+		 WHERE tenant_id = ? AND incident_id = ?
+		 ORDER BY verified_at ASC, gate ASC`, x.tenant, string(id))
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: reading verification gates of incident %q: %w", id, err)
+	}
+	defer rows.Close()
+
+	var out []domain.GateResult
+	for rows.Next() {
+		var (
+			gate, detail string
+			passed       int
+			at           string
+		)
+		if err := rows.Scan(&gate, &passed, &detail, &at); err != nil {
+			return nil, err
+		}
+		t, err := decodeTime(sql.NullString{String: at, Valid: true})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, domain.GateResult{
+			Gate: domain.Gate(gate), Passed: passed == 1, Detail: detail, At: t,
+		})
+	}
+	return out, rows.Err()
+}
+
+// edit restores what Agentd originally suggested, when an operator changed it
+// before approving. Without this the suggestion would come back as whatever
+// the human wrote, and the record of Agentd having been partly wrong would be
+// quietly lost.
+func (x q) edit(ctx context.Context, id domain.IncidentID, p *domain.RepairProposal) error {
+	var proposedJSON string
+	err := x.db.QueryRowContext(ctx, `
+		SELECT proposed_locators_json FROM repair_diffs
+		 WHERE tenant_id = ? AND incident_id = ?
+		 ORDER BY edited_at DESC LIMIT 1`, x.tenant, string(id)).Scan(&proposedJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("sqlite: reading edited repair for incident %q: %w", id, err)
+	}
+
+	var proposed []domain.Locator
+	if err := decodeJSON(proposedJSON, &proposed); err != nil {
+		return err
+	}
+	p.ProposedLocators = proposed
+	p.Edited = true
+	return nil
 }
 
 // decision applies a recorded human decision to a proposal, if there is one.
@@ -411,63 +532,4 @@ func (x q) RecordRepairEdit(ctx context.Context, e RepairEdit) error {
 		return fmt.Errorf("sqlite: recording repair edit %q: %w", e.ID, err)
 	}
 	return nil
-}
-
-// AuditEvent is one thing that happened, kept so that a tool which asks
-// permission can show later exactly what it asked and what was answered.
-type AuditEvent struct {
-	ID          string
-	At          time.Time
-	Actor       string
-	Action      string
-	SubjectKind string
-	SubjectID   string
-	Detail      string
-}
-
-// AppendAudit records an event. The audit table is append-only by convention
-// and is not swept by retention.
-func (x q) AppendAudit(ctx context.Context, e AuditEvent) error {
-	if _, err := x.db.ExecContext(ctx, `
-		INSERT INTO audit_events (tenant_id, id, at, actor, action, subject_kind, subject_id, detail)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (tenant_id, id) DO NOTHING`,
-		x.tenant, e.ID, mustEncodeTime(e.At), e.Actor, e.Action,
-		e.SubjectKind, e.SubjectID, e.Detail,
-	); err != nil {
-		return fmt.Errorf("sqlite: recording audit event %q: %w", e.ID, err)
-	}
-	return nil
-}
-
-// Audit reads the audit trail for a tenant, newest first.
-func (s *Store) Audit(ctx context.Context, limit int) ([]AuditEvent, error) {
-	if limit <= 0 {
-		limit = 100
-	}
-	rows, err := s.reader.QueryContext(ctx, `
-		SELECT id, at, actor, action, subject_kind, subject_id, detail
-		  FROM audit_events WHERE tenant_id = ? ORDER BY at DESC LIMIT ?`, s.tenant, limit)
-	if err != nil {
-		return nil, fmt.Errorf("sqlite: reading audit trail: %w", err)
-	}
-	defer rows.Close()
-
-	var out []AuditEvent
-	for rows.Next() {
-		var (
-			e  AuditEvent
-			at string
-		)
-		if err := rows.Scan(&e.ID, &at, &e.Actor, &e.Action, &e.SubjectKind, &e.SubjectID, &e.Detail); err != nil {
-			return nil, err
-		}
-		t, err := decodeTime(sql.NullString{String: at, Valid: true})
-		if err != nil {
-			return nil, err
-		}
-		e.At = t
-		out = append(out, e)
-	}
-	return out, rows.Err()
 }

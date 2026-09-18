@@ -62,6 +62,7 @@ type memStore struct {
 	hasLast   bool
 	saved     []domain.Binding
 	activated []int
+	audit     []domain.AuditEvent
 }
 
 func (s *memStore) Snapshots(context.Context, domain.CheckID) (*domain.SnapshotIndex, error) {
@@ -91,6 +92,16 @@ func (s *memStore) ActivateBinding(_ context.Context, _ domain.CheckID, version 
 }
 
 func (s *memStore) SaveIncident(context.Context, *domain.Incident) error { return nil }
+
+// AppendAudit captures the event the orchestrator records alongside a
+// proposal, so a test can assert Agentd attributed its own work to itself.
+func (s *memStore) AppendAudit(_ context.Context, e domain.AuditEvent) error {
+	if err := e.Validate(); err != nil {
+		return err
+	}
+	s.audit = append(s.audit, e)
+	return nil
+}
 
 func (s *memStore) Update(ctx context.Context, fn func(context.Context, ports.Tx) error) error {
 	return fn(ctx, txOf{memStore: s})
@@ -230,6 +241,21 @@ func TestVerifiedProposalIsRecordedButNotApplied(t *testing.T) {
 	}
 	if i.State() != domain.IncidentAwaitingApproval {
 		t.Errorf("State = %q, want %q", i.State(), domain.IncidentAwaitingApproval)
+	}
+
+	// Every required gate, recorded individually. "It failed verification" is
+	// not an answer an operator can act on.
+	seen := map[domain.Gate]bool{}
+	for _, g := range p.Gates {
+		if !g.Passed {
+			t.Errorf("gate %q failed on a proposal that was accepted: %s", g.Gate, g.Detail)
+		}
+		seen[g.Gate] = true
+	}
+	for _, want := range domain.RequiredGates {
+		if !seen[want] {
+			t.Errorf("the %q gate was never run", want)
+		}
 	}
 
 	// Stored, so a human can review it. Not activated, ever.
