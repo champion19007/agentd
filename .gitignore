@@ -1,0 +1,6 @@
+/agentd
+/agentd.exe
+/dist/
+*.db
+*.db-wal
+*.db-shm

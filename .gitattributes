@@ -1,0 +1,6 @@
+# Go tooling assumes LF. Checking out CRLF makes gofmt and the build disagree
+# with the repository about every line, so normalise on the way in and keep LF
+# in the working tree on every platform.
+* text=auto eol=lf
+*.go text eol=lf
+*.sql text eol=lf
