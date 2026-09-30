@@ -38,12 +38,12 @@ func TestClientValidResponse(t *testing.T) {
 
 	apiKey := "sk-ant-api03-testkey-12345"
 	client := model.New(model.Options{
-		Endpoint:   srv.URL,
-		APIKeyRef:  "anthropic-key",
-		Secrets:    secrets.Static{"anthropic-key": apiKey},
-		Model:      "claude-3-7-sonnet-20250219",
-		MaxTokens:  1024,
-		Timeout:    5 * time.Second,
+		Endpoint:  srv.URL,
+		APIKeyRef: "anthropic-key",
+		Secrets:   secrets.Static{"anthropic-key": apiKey},
+		Model:     "claude-3-7-sonnet-20250219",
+		MaxTokens: 1024,
+		Timeout:   5 * time.Second,
 	})
 
 	resp, err := client.Complete(context.Background(), ports.ModelRequest{

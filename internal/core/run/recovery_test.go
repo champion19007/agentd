@@ -52,30 +52,44 @@ func (tx recoveryTx) AppendAudit(_ context.Context, e domain.AuditEvent) error {
 	return nil
 }
 
-func (tx recoveryTx) Check(context.Context, domain.CheckID) (*domain.Check, error)                 { return nil, nil }
-func (tx recoveryTx) EnabledChecks(context.Context) ([]*domain.Check, error)                       { return nil, nil }
-func (tx recoveryTx) Run(context.Context, domain.RunID) (*domain.Run, error)                       { return nil, nil }
-func (tx recoveryTx) RunForSlot(context.Context, domain.CheckID, domain.Slot) (*domain.Run, error) { return nil, nil }
-func (tx recoveryTx) RecentRuns(context.Context, domain.CheckID, int) ([]*domain.Run, error)       { return nil, nil }
-func (tx recoveryTx) LastResult(context.Context, domain.CheckID) (domain.Extraction, error)       { return domain.Extraction{}, nil }
-func (tx recoveryTx) ActiveBinding(context.Context, domain.CheckID) (domain.Binding, error)       { return domain.Binding{}, nil }
-func (tx recoveryTx) Snapshot(context.Context, domain.SnapshotID) (domain.Snapshot, error)       { return domain.Snapshot{}, nil }
-func (tx recoveryTx) Snapshots(context.Context, domain.CheckID) (*domain.SnapshotIndex, error)   { return nil, nil }
-func (tx recoveryTx) Incidents(context.Context, domain.CheckID) (*domain.IncidentLog, error)     { return nil, nil }
-func (tx recoveryTx) AuditTrail(context.Context, int) ([]domain.AuditEvent, error)                { return nil, nil }
-func (tx recoveryTx) NonTerminalRuns(context.Context) ([]*domain.Run, error)                      { return nil, nil }
-func (tx recoveryTx) SaveCheck(context.Context, *domain.Check) error                              { return nil }
-func (tx recoveryTx) CreateRun(context.Context, *domain.Run) error                               { return nil }
-func (tx recoveryTx) PutSnapshot(context.Context, domain.Snapshot) error                          { return nil }
+func (tx recoveryTx) Check(context.Context, domain.CheckID) (*domain.Check, error) { return nil, nil }
+func (tx recoveryTx) EnabledChecks(context.Context) ([]*domain.Check, error)       { return nil, nil }
+func (tx recoveryTx) Run(context.Context, domain.RunID) (*domain.Run, error)       { return nil, nil }
+func (tx recoveryTx) RunForSlot(context.Context, domain.CheckID, domain.Slot) (*domain.Run, error) {
+	return nil, nil
+}
+func (tx recoveryTx) RecentRuns(context.Context, domain.CheckID, int) ([]*domain.Run, error) {
+	return nil, nil
+}
+func (tx recoveryTx) LastResult(context.Context, domain.CheckID) (domain.Extraction, error) {
+	return domain.Extraction{}, nil
+}
+func (tx recoveryTx) ActiveBinding(context.Context, domain.CheckID) (domain.Binding, error) {
+	return domain.Binding{}, nil
+}
+func (tx recoveryTx) Snapshot(context.Context, domain.SnapshotID) (domain.Snapshot, error) {
+	return domain.Snapshot{}, nil
+}
+func (tx recoveryTx) Snapshots(context.Context, domain.CheckID) (*domain.SnapshotIndex, error) {
+	return nil, nil
+}
+func (tx recoveryTx) Incidents(context.Context, domain.CheckID) (*domain.IncidentLog, error) {
+	return nil, nil
+}
+func (tx recoveryTx) AuditTrail(context.Context, int) ([]domain.AuditEvent, error) { return nil, nil }
+func (tx recoveryTx) NonTerminalRuns(context.Context) ([]*domain.Run, error)       { return nil, nil }
+func (tx recoveryTx) SaveCheck(context.Context, *domain.Check) error               { return nil }
+func (tx recoveryTx) CreateRun(context.Context, *domain.Run) error                 { return nil }
+func (tx recoveryTx) PutSnapshot(context.Context, domain.Snapshot) error           { return nil }
 func (tx recoveryTx) MarkSnapshotKnownGood(context.Context, domain.CheckID, domain.SnapshotID) error {
 	return nil
 }
 func (tx recoveryTx) DeleteSnapshots(context.Context, domain.CheckID, []domain.SnapshotID) error {
 	return nil
 }
-func (tx recoveryTx) SaveBinding(context.Context, domain.Binding) error       { return nil }
+func (tx recoveryTx) SaveBinding(context.Context, domain.Binding) error          { return nil }
 func (tx recoveryTx) ActivateBinding(context.Context, domain.CheckID, int) error { return nil }
-func (tx recoveryTx) SaveIncident(context.Context, *domain.Incident) error   { return nil }
+func (tx recoveryTx) SaveIncident(context.Context, *domain.Incident) error       { return nil }
 
 func TestRecoverCrashedRuns(t *testing.T) {
 	st := &recoveryStore{runs: map[domain.RunKey]*domain.Run{}}
@@ -174,4 +188,3 @@ func TestRecoverCrashedRuns_ErrorsAndEmpty(t *testing.T) {
 		t.Error("expected error when store.Update fails")
 	}
 }
-

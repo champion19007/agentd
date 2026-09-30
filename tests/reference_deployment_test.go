@@ -116,7 +116,7 @@ func TestReferenceDeployment_50Sources(t *testing.T) {
 			cfg.binding = domain.Binding{
 				ID: domain.BindingID(fmt.Sprintf("bin-%02d", i+1)), CheckID: domain.CheckID(cfg.id),
 				DefinitionVersion: 1, Version: 1, IntentKind: domain.IntentRecord, Fingerprint: "fp-rec",
-				Origin:   domain.OriginInferred,
+				Origin: domain.OriginInferred,
 				Locators: []domain.Locator{
 					{Target: "name", Dialect: extract.DialectCSS, Expression: ".user-card .name"},
 					{Target: "role", Dialect: extract.DialectCSS, Expression: ".user-card .role"},
@@ -139,7 +139,7 @@ func TestReferenceDeployment_50Sources(t *testing.T) {
 			cfg.binding = domain.Binding{
 				ID: domain.BindingID(fmt.Sprintf("bin-%02d", i+1)), CheckID: domain.CheckID(cfg.id),
 				DefinitionVersion: 1, Version: 1, IntentKind: domain.IntentCollection, Fingerprint: "fp-col",
-				Origin:   domain.OriginInferred,
+				Origin: domain.OriginInferred,
 				Locators: []domain.Locator{
 					{Target: domain.CollectionRoot, Dialect: extract.DialectCSS, Expression: "table tr"},
 					{Target: "item", Dialect: extract.DialectCSS, Expression: ".item"},

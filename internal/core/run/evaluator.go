@@ -42,13 +42,13 @@ const DefaultMaxExcerptBytes = 4096
 // EvaluateChange semantically evaluates whether current differs from previous according to intent.
 //
 // Invariants enforced:
-// 1. Hash Gate / Equality: If current equals previous, VerdictUnchanged is returned immediately
-//    WITHOUT invoking the model (saving token costs).
-// 2. Prompt Security: Fetched content is placed within <untrusted_source_content> XML tags and
-//    system instructions explicitly forbid interpreting content as executable instructions.
-// 3. Structured Output: The model must return valid JSON matching ChangeEvaluation. Any schema
-//    violation, truncated response, or invalid verdict produces a domain.ClassSemantic failure.
-// 4. Payload Truncation: Untrusted payload excerpts are capped to maxBytes to avoid budget blowout.
+//  1. Hash Gate / Equality: If current equals previous, VerdictUnchanged is returned immediately
+//     WITHOUT invoking the model (saving token costs).
+//  2. Prompt Security: Fetched content is placed within <untrusted_source_content> XML tags and
+//     system instructions explicitly forbid interpreting content as executable instructions.
+//  3. Structured Output: The model must return valid JSON matching ChangeEvaluation. Any schema
+//     violation, truncated response, or invalid verdict produces a domain.ClassSemantic failure.
+//  4. Payload Truncation: Untrusted payload excerpts are capped to maxBytes to avoid budget blowout.
 func EvaluateChange(
 	ctx context.Context,
 	model ports.Model,

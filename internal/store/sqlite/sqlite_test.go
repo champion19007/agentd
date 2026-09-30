@@ -2126,4 +2126,3 @@ func TestGC_PassiveWALCheckpoint(t *testing.T) {
 	}
 	t.Logf("GC executed successfully with passive WAL checkpoint: %+v", sweep)
 }
-

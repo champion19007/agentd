@@ -642,4 +642,3 @@ func TestTenRealBreakagesValidation(t *testing.T) {
 			r.CorrectCandidate, r.FalseCandidate, r.ApprovalRequired, r.FinalResult)
 	}
 }
-

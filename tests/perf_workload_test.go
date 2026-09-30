@@ -574,10 +574,10 @@ func TestPerformance_Backpressure_SkippedOverload(t *testing.T) {
 	})
 
 	chk, _ := domain.NewCheck("chk-backpressure", domain.Definition{
-		Version: 1,
-		Intent:  domain.ScalarIntent{Label: "bp", Purpose: "bp test", Type: domain.TypeString},
-		Source:  domain.SourceSpec{Kind: domain.SourceHTTP, URL: "http://127.0.0.1:9"},
-		Schedule: domain.Schedule{Interval: time.Minute},
+		Version:   1,
+		Intent:    domain.ScalarIntent{Label: "bp", Purpose: "bp test", Type: domain.TypeString},
+		Source:    domain.SourceSpec{Kind: domain.SourceHTTP, URL: "http://127.0.0.1:9"},
+		Schedule:  domain.Schedule{Interval: time.Minute},
 		CreatedAt: clk.Now(),
 	})
 
@@ -708,10 +708,10 @@ func TestPerformance_GracefulDegradationOrder(t *testing.T) {
 	})
 
 	chk, _ := domain.NewCheck("chk-deg", domain.Definition{
-		Version: 1,
-		Intent:  domain.ScalarIntent{Label: "price", Purpose: "tracking", Type: domain.TypeString},
-		Source:  domain.SourceSpec{Kind: domain.SourceHTTP, URL: "http://127.0.0.1:9"},
-		Schedule: domain.Schedule{Interval: time.Hour},
+		Version:   1,
+		Intent:    domain.ScalarIntent{Label: "price", Purpose: "tracking", Type: domain.TypeString},
+		Source:    domain.SourceSpec{Kind: domain.SourceHTTP, URL: "http://127.0.0.1:9"},
+		Schedule:  domain.Schedule{Interval: time.Hour},
 		CreatedAt: clk.Now(),
 	})
 

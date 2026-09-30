@@ -697,4 +697,3 @@ func TestOperatorWorkflow_ErgonomicsAndAliases(t *testing.T) {
 		t.Errorf("flag ordering inconsistency: code1=%d code2=%d\nd1=%+v\nd2=%+v", code1, code2, d1, d2)
 	}
 }
-

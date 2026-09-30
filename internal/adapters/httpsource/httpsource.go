@@ -67,17 +67,17 @@ var privateIPBlocks []*net.IPNet
 
 func init() {
 	for _, cidr := range []string{
-		"127.0.0.0/8",      // IPv4 loopback
-		"10.0.0.0/8",       // RFC1918
-		"172.16.0.0/12",    // RFC1918
-		"192.168.0.0/16",   // RFC1918
-		"169.254.0.0/16",   // IPv4 link-local
-		"100.64.0.0/10",    // Shared address space (CGNAT)
-		"0.0.0.0/8",        // Current network
-		"::1/128",          // IPv6 loopback
-		"fc00::/7",         // IPv6 unique local (private)
-		"fe80::/10",        // IPv6 link-local
-		"::/128",           // IPv6 unspecified
+		"127.0.0.0/8",    // IPv4 loopback
+		"10.0.0.0/8",     // RFC1918
+		"172.16.0.0/12",  // RFC1918
+		"192.168.0.0/16", // RFC1918
+		"169.254.0.0/16", // IPv4 link-local
+		"100.64.0.0/10",  // Shared address space (CGNAT)
+		"0.0.0.0/8",      // Current network
+		"::1/128",        // IPv6 loopback
+		"fc00::/7",       // IPv6 unique local (private)
+		"fe80::/10",      // IPv6 link-local
+		"::/128",         // IPv6 unspecified
 	} {
 		_, block, err := net.ParseCIDR(cidr)
 		if err == nil {

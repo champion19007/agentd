@@ -483,5 +483,3 @@ func truncateString(s string, limit int) string {
 	}
 	return s[:limit] + "..."
 }
-
-

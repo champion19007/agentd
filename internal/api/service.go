@@ -967,9 +967,15 @@ func (c clockAdapter) Sleep(ctx context.Context, d time.Duration) error {
 
 type defaultIDs struct{}
 
-func (defaultIDs) NewRunID() domain.RunID           { return domain.RunID(fmt.Sprintf("run_%d", time.Now().UnixNano())) }
-func (defaultIDs) NewIncidentID() domain.IncidentID { return domain.IncidentID(fmt.Sprintf("inc_%d", time.Now().UnixNano())) }
-func (defaultIDs) NewBindingID() domain.BindingID   { return domain.BindingID(fmt.Sprintf("bin_%d", time.Now().UnixNano())) }
+func (defaultIDs) NewRunID() domain.RunID {
+	return domain.RunID(fmt.Sprintf("run_%d", time.Now().UnixNano()))
+}
+func (defaultIDs) NewIncidentID() domain.IncidentID {
+	return domain.IncidentID(fmt.Sprintf("inc_%d", time.Now().UnixNano()))
+}
+func (defaultIDs) NewBindingID() domain.BindingID {
+	return domain.BindingID(fmt.Sprintf("bin_%d", time.Now().UnixNano()))
+}
 
 // ExportMetrics refreshes check staleness for all enabled checks and returns Prometheus metrics.
 func (s *Service) ExportMetrics() string {
@@ -1000,4 +1006,3 @@ func (s *Service) ExportMetrics() string {
 	}
 	return ""
 }
-

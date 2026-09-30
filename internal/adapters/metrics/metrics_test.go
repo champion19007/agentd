@@ -129,4 +129,3 @@ func TestMetricsRegistry_CheckIDClamped(t *testing.T) {
 		t.Errorf("export contains unclamped check label exceeding 128 chars")
 	}
 }
-

@@ -51,7 +51,7 @@ jobs:
           AGENTD_GPG_KEY: ${{ secrets.AGENTD_GPG_KEY }}
           COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
         run: |
-          ./scripts/sign.sh dist/SHA256SUMS
+          sh ./scripts/sign.sh dist/SHA256SUMS
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

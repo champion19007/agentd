@@ -161,4 +161,3 @@ func TestWorkerPool_DefaultsClosedAndDoubleShutdown(t *testing.T) {
 		t.Errorf("expected (false, ErrPoolClosed), got (%v, %v)", ok, err)
 	}
 }
-

@@ -51,11 +51,11 @@ func (c *testClock) Sleep(ctx context.Context, d time.Duration) error {
 // fakeStore implements only the methods the scheduler calls.
 type fakeStore struct {
 	ports.Store
-	checks         []*domain.Check
-	ran            map[domain.RunKey]bool
-	enabledErr     error
-	runForSlotErr  error
-	recentRunsErr  error
+	checks        []*domain.Check
+	ran           map[domain.RunKey]bool
+	enabledErr    error
+	runForSlotErr error
+	recentRunsErr error
 }
 
 func (s *fakeStore) EnabledChecks(context.Context) ([]*domain.Check, error) {
@@ -312,9 +312,9 @@ func checkWithPolicy(t *testing.T, id domain.CheckID, interval time.Duration, ca
 			Purpose: "the advertised price",
 			Type:    domain.TypeNumber,
 		},
-		Source:   domain.SourceSpec{Kind: domain.SourceHTTP, URL: "https://example.test"},
-		Schedule: domain.Schedule{Interval: interval, CatchUp: catchUp},
-		Policy:   domain.Policy{Priority: priority},
+		Source:    domain.SourceSpec{Kind: domain.SourceHTTP, URL: "https://example.test"},
+		Schedule:  domain.Schedule{Interval: interval, CatchUp: catchUp},
+		Policy:    domain.Policy{Priority: priority},
 		CreatedAt: base,
 	})
 	if err != nil {
@@ -595,4 +595,3 @@ func TestScheduler_CoverageAndEdgeCases(t *testing.T) {
 		t.Errorf("DueChecks backfill count = %d, want 101 (bounded by 100)", len(dueBf))
 	}
 }
-

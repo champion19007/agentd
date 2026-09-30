@@ -28,7 +28,7 @@ type e2eClock struct {
 	now time.Time
 }
 
-func (c *e2eClock) Now() time.Time                             { return c.now }
+func (c *e2eClock) Now() time.Time { return c.now }
 func (c *e2eClock) Sleep(_ context.Context, d time.Duration) error {
 	c.now = c.now.Add(d)
 	return nil

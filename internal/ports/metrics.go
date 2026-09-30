@@ -39,13 +39,13 @@ type Metrics interface {
 // NoopMetrics is a null object implementation of Metrics that drops all signals.
 type NoopMetrics struct{}
 
-func (NoopMetrics) RecordRun(string, string)                                      {}
-func (NoopMetrics) RecordRunDuration(string, string, float64)                    {}
-func (NoopMetrics) SetCheckStaleness(string, float64)                             {}
-func (NoopMetrics) RecordModelUsage(string, string, int, int64)                  {}
-func (NoopMetrics) RecordIncident(string, string)                                 {}
-func (NoopMetrics) RecordIncidentResolution(float64)                              {}
-func (NoopMetrics) SetQueueDepth(int)                                            {}
-func (NoopMetrics) RecordPluginCall(string, string)                               {}
+func (NoopMetrics) RecordRun(string, string)                    {}
+func (NoopMetrics) RecordRunDuration(string, string, float64)   {}
+func (NoopMetrics) SetCheckStaleness(string, float64)           {}
+func (NoopMetrics) RecordModelUsage(string, string, int, int64) {}
+func (NoopMetrics) RecordIncident(string, string)               {}
+func (NoopMetrics) RecordIncidentResolution(float64)            {}
+func (NoopMetrics) SetQueueDepth(int)                           {}
+func (NoopMetrics) RecordPluginCall(string, string)             {}
 
 var _ Metrics = NoopMetrics{}

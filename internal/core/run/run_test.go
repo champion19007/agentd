@@ -951,6 +951,3 @@ func TestOrchestratorDegradationModes(t *testing.T) {
 		t.Errorf("expected StateFailed, got: %s", outFail.Run.State())
 	}
 }
-
-
-

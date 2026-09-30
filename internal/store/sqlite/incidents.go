@@ -285,8 +285,8 @@ func (x q) OpenIncidents(ctx context.Context) ([]*domain.Incident, error) {
 
 	type row struct {
 		id, checkID, state, cause, openedAt, resolution string
-		closedAt                                       sql.NullString
-		maxAttempts                                    int
+		closedAt                                        sql.NullString
+		maxAttempts                                     int
 	}
 	var raw []row
 	for rows.Next() {

@@ -370,12 +370,12 @@ func TestCheckStalenessCalculation(t *testing.T) {
 
 func TestDegradationLevelMethods(t *testing.T) {
 	cases := []struct {
-		lvl             domain.DegradationLevel
-		name            string
-		shedsHealing    bool
-		shedsModel      bool
+		lvl              domain.DegradationLevel
+		name             string
+		shedsHealing     bool
+		shedsModel       bool
 		reducesRetention bool
-		shedsRuns       bool
+		shedsRuns        bool
 	}{
 		{domain.DegradationNormal, "normal", false, false, false, false},
 		{domain.DegradationShedHealing, "shed_healing", true, false, false, false},
@@ -405,4 +405,3 @@ func TestDegradationLevelMethods(t *testing.T) {
 		})
 	}
 }
-

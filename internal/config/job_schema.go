@@ -16,14 +16,14 @@ import (
 // Forward-Only Schema Migration Policy:
 // Agentd supports the current schema version (v2) and exactly one previous version (v1).
 //
-// 1. Loading: When a job configuration file or payload in schema version 1 is loaded,
-//    it is automatically migrated forward in-memory to schema version 2 (migrated=true).
-// 2. Writing: If the job definition is subsequently edited, updated, or saved back by
-//    user action or CLI/API mutation, it will ALWAYS be serialized and written back
-//    exclusively in the current schema version (v2).
-// 3. Backward Compatibility: Backward migration from v2 to v1 is intentionally unsupported.
-//    Operators should be aware that once an older job file is edited by Agentd, its on-disk
-//    format is promoted to v2.
+//  1. Loading: When a job configuration file or payload in schema version 1 is loaded,
+//     it is automatically migrated forward in-memory to schema version 2 (migrated=true).
+//  2. Writing: If the job definition is subsequently edited, updated, or saved back by
+//     user action or CLI/API mutation, it will ALWAYS be serialized and written back
+//     exclusively in the current schema version (v2).
+//  3. Backward Compatibility: Backward migration from v2 to v1 is intentionally unsupported.
+//     Operators should be aware that once an older job file is edited by Agentd, its on-disk
+//     format is promoted to v2.
 const (
 	CurrentJobSchemaVersion      = 2
 	PreviousJobSchemaVersion     = 1
@@ -39,13 +39,13 @@ var (
 
 // SourceConfig configures source access in a JobDefinition.
 type SourceConfig struct {
-	Kind          string                       `json:"kind"`
-	URL           string                       `json:"url,omitempty"`
-	Method        string                       `json:"method,omitempty"`
-	Headers       map[string]string            `json:"headers,omitempty"`
-	SecretHeaders map[string]domain.SecretRef  `json:"secret_headers,omitempty"`
-	Plugin        string                       `json:"plugin,omitempty"`
-	PluginArgs    map[string]string            `json:"plugin_args,omitempty"`
+	Kind          string                      `json:"kind"`
+	URL           string                      `json:"url,omitempty"`
+	Method        string                      `json:"method,omitempty"`
+	Headers       map[string]string           `json:"headers,omitempty"`
+	SecretHeaders map[string]domain.SecretRef `json:"secret_headers,omitempty"`
+	Plugin        string                      `json:"plugin,omitempty"`
+	PluginArgs    map[string]string           `json:"plugin_args,omitempty"`
 }
 
 // ScheduleConfig configures check cadence in a JobDefinition.

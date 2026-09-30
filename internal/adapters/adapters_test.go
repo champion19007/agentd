@@ -724,4 +724,3 @@ func TestHTTPSource_ConnectTimeoutSeparation(t *testing.T) {
 		t.Errorf("connect timeout did not abort early: took %v (expected well under 10s)", elapsed)
 	}
 }
-

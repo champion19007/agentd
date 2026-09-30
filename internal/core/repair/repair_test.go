@@ -90,21 +90,21 @@ func (n *stubNotifier) Deliver(_ context.Context, notif domain.Notification) err
 type memStore struct {
 	ports.Store
 
-	index           *domain.SnapshotIndex
-	binding         domain.Binding
-	last            domain.Extraction
-	hasLast         bool
-	saved           []domain.Binding
-	activated       []int
-	audit           []domain.AuditEvent
-	incidentLogs    map[domain.CheckID]*domain.IncidentLog
-	openIncList     []*domain.Incident
-	snapshotsErr    error
+	index            *domain.SnapshotIndex
+	binding          domain.Binding
+	last             domain.Extraction
+	hasLast          bool
+	saved            []domain.Binding
+	activated        []int
+	audit            []domain.AuditEvent
+	incidentLogs     map[domain.CheckID]*domain.IncidentLog
+	openIncList      []*domain.Incident
+	snapshotsErr     error
 	activeBindingErr error
-	lastResultErr   error
-	incidentsErr    error
+	lastResultErr    error
+	incidentsErr     error
 	openIncidentsErr error
-	updateErr       error
+	updateErr        error
 }
 
 func (s *memStore) Snapshots(context.Context, domain.CheckID) (*domain.SnapshotIndex, error) {
@@ -1966,10 +1966,3 @@ func TestRepairCandidate_PseudoprotocolValidation(t *testing.T) {
 		})
 	}
 }
-
-
-
-
-
-
-

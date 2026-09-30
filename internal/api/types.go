@@ -93,10 +93,10 @@ type CheckSummary struct {
 // CheckDetail gives the complete configuration and state of a check.
 type CheckDetail struct {
 	CheckSummary
-	Version     int              `json:"version"`
-	Shape       string           `json:"shape"`
-	Locators    []domain.Locator `json:"locators"`
-	RecentRuns  []RunSummary     `json:"recent_runs,omitempty"`
+	Version    int              `json:"version"`
+	Shape      string           `json:"shape"`
+	Locators   []domain.Locator `json:"locators"`
+	RecentRuns []RunSummary     `json:"recent_runs,omitempty"`
 }
 
 // RunSummary is a concise record of a finished check execution.
@@ -122,13 +122,13 @@ type RunDetail struct {
 
 // IncidentSummary describes an open breakage incident.
 type IncidentSummary struct {
-	ID            string `json:"id"`
-	CheckID       string `json:"check_id"`
-	State         string `json:"state"`
-	WhatBroke     string `json:"what_broke"`
-	OpenedAt      string `json:"opened_at"`
-	AttemptsLeft  int    `json:"attempts_remaining"`
-	HasProposal   bool   `json:"has_proposal"`
+	ID           string `json:"id"`
+	CheckID      string `json:"check_id"`
+	State        string `json:"state"`
+	WhatBroke    string `json:"what_broke"`
+	OpenedAt     string `json:"opened_at"`
+	AttemptsLeft int    `json:"attempts_remaining"`
+	HasProposal  bool   `json:"has_proposal"`
 }
 
 // GateResultSummary describes the outcome of one verification gate.

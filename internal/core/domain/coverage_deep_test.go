@@ -720,7 +720,7 @@ func TestDomain_IncidentAndRepairCoverage(t *testing.T) {
 	}
 
 	// ResolveWithRepair
-	if err := inc.ResolveWithRepair(now.Add(4*time.Second)); err != nil {
+	if err := inc.ResolveWithRepair(now.Add(4 * time.Second)); err != nil {
 		t.Fatalf("ResolveWithRepair failed: %v", err)
 	}
 	if inc.State() != domain.IncidentResolved {
@@ -1079,12 +1079,12 @@ func TestDomain_ExtractionValidationAndIncidentInvariants(t *testing.T) {
 
 	// attempts out of order
 	_, err := domain.RestoreIncident(domain.RestoredIncident{
-		ID:        "inc-bad-att-order",
-		CheckID:   "chk-1",
-		Cause:     f,
+		ID:          "inc-bad-att-order",
+		CheckID:     "chk-1",
+		Cause:       f,
 		MaxAttempts: 3,
-		State:     domain.IncidentOpen,
-		OpenedAt:  now,
+		State:       domain.IncidentOpen,
+		OpenedAt:    now,
 		Attempts: []domain.RepairAttempt{
 			{Number: 2, At: now, Outcome: domain.AttemptUnverified},
 		},
@@ -1095,12 +1095,12 @@ func TestDomain_ExtractionValidationAndIncidentInvariants(t *testing.T) {
 
 	// attempts exceeding budget
 	_, err = domain.RestoreIncident(domain.RestoredIncident{
-		ID:        "inc-bad-att-budget",
-		CheckID:   "chk-1",
-		Cause:     f,
+		ID:          "inc-bad-att-budget",
+		CheckID:     "chk-1",
+		Cause:       f,
 		MaxAttempts: 1,
-		State:     domain.IncidentOpen,
-		OpenedAt:  now,
+		State:       domain.IncidentOpen,
+		OpenedAt:    now,
 		Attempts: []domain.RepairAttempt{
 			{Number: 1, At: now, Outcome: domain.AttemptUnverified},
 			{Number: 2, At: now, Outcome: domain.AttemptUnverified},
@@ -1112,12 +1112,12 @@ func TestDomain_ExtractionValidationAndIncidentInvariants(t *testing.T) {
 
 	// closed without close time
 	_, err = domain.RestoreIncident(domain.RestoredIncident{
-		ID:        "inc-bad-close-time",
-		CheckID:   "chk-1",
-		Cause:     f,
+		ID:          "inc-bad-close-time",
+		CheckID:     "chk-1",
+		Cause:       f,
 		MaxAttempts: 3,
-		State:     domain.IncidentResolved,
-		OpenedAt:  now,
+		State:       domain.IncidentResolved,
+		OpenedAt:    now,
 		// ClosedAt is zero
 	})
 	if err == nil {
@@ -1126,13 +1126,13 @@ func TestDomain_ExtractionValidationAndIncidentInvariants(t *testing.T) {
 
 	// awaiting approval without proposal
 	_, err = domain.RestoreIncident(domain.RestoredIncident{
-		ID:        "inc-bad-awaiting-prop",
-		CheckID:   "chk-1",
-		Cause:     f,
+		ID:          "inc-bad-awaiting-prop",
+		CheckID:     "chk-1",
+		Cause:       f,
 		MaxAttempts: 3,
-		State:     domain.IncidentAwaitingApproval,
-		OpenedAt:  now,
-		Proposal:  nil,
+		State:       domain.IncidentAwaitingApproval,
+		OpenedAt:    now,
+		Proposal:    nil,
 	})
 	if err == nil {
 		t.Error("expected error restoring awaiting approval incident without proposal")
@@ -1174,7 +1174,3 @@ func TestDomain_ExtractionValidationAndIncidentInvariants(t *testing.T) {
 		t.Error("expected error for zero time in audit")
 	}
 }
-
-
-
-

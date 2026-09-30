@@ -22,16 +22,22 @@ type fixedClock struct {
 	now time.Time
 }
 
-func (c fixedClock) Now() time.Time                         { return c.now }
+func (c fixedClock) Now() time.Time                             { return c.now }
 func (c fixedClock) Sleep(context.Context, time.Duration) error { return nil }
 
 type fixedIDs struct {
 	seq int
 }
 
-func (i *fixedIDs) NewRunID() domain.RunID           { i.seq++; return domain.RunID("run-" + itoa(i.seq)) }
-func (i *fixedIDs) NewIncidentID() domain.IncidentID { i.seq++; return domain.IncidentID("inc-" + itoa(i.seq)) }
-func (i *fixedIDs) NewBindingID() domain.BindingID   { i.seq++; return domain.BindingID("bind-" + itoa(i.seq)) }
+func (i *fixedIDs) NewRunID() domain.RunID { i.seq++; return domain.RunID("run-" + itoa(i.seq)) }
+func (i *fixedIDs) NewIncidentID() domain.IncidentID {
+	i.seq++
+	return domain.IncidentID("inc-" + itoa(i.seq))
+}
+func (i *fixedIDs) NewBindingID() domain.BindingID {
+	i.seq++
+	return domain.BindingID("bind-" + itoa(i.seq))
+}
 
 func itoa(n int) string {
 	b := make([]byte, 0, 10)

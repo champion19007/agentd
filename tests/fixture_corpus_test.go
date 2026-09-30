@@ -32,10 +32,10 @@ type GoldenFixture struct {
 	Intent      domain.Intent
 	Binding     domain.Binding
 	ExpectPass  bool
-	WantScalar  string // For scalar intent
+	WantScalar  string            // For scalar intent
 	WantRecord  map[string]string // For record intent
-	WantCount   int    // For collection intent
-	CheckInert  bool   // For adversarial
+	WantCount   int               // For collection intent
+	CheckInert  bool              // For adversarial
 }
 
 var goldenFixtures = []GoldenFixture{
@@ -148,13 +148,13 @@ var goldenFixtures = []GoldenFixture{
 		ID:          "fix-08-cosmetic-whitespace",
 		Kind:        KindCosmetic,
 		Description: "Excessive whitespace and newlines inside target tag",
-		HTML:        `<div class="product"><span class="price">   
+		HTML: `<div class="product"><span class="price">   
 			$49.99   
 		</span></div>`,
-		Intent:      domain.ScalarIntent{Label: "price", Purpose: "clean price", Type: domain.TypeString},
-		Binding:     domain.Binding{ID: "b8", IntentKind: domain.IntentScalar, Locators: []domain.Locator{{Target: "price", Dialect: extract.DialectCSS, Expression: ".product .price"}}},
-		ExpectPass:  true,
-		WantScalar:  "$49.99",
+		Intent:     domain.ScalarIntent{Label: "price", Purpose: "clean price", Type: domain.TypeString},
+		Binding:    domain.Binding{ID: "b8", IntentKind: domain.IntentScalar, Locators: []domain.Locator{{Target: "price", Dialect: extract.DialectCSS, Expression: ".product .price"}}},
+		ExpectPass: true,
+		WantScalar: "$49.99",
 	},
 	{
 		ID:          "fix-09-cosmetic-html-comments",
@@ -551,7 +551,7 @@ var goldenFixtures = []GoldenFixture{
 		ID:          "fix-39-table-nested-tables",
 		Kind:        KindTable,
 		Description: "Table nested inside layout table",
-		HTML: `<table class="outer"><tr><td><table class="inner"><tr><td class="data">42</td></tr></table></td></tr></table>`,
+		HTML:        `<table class="outer"><tr><td><table class="inner"><tr><td class="data">42</td></tr></table></td></tr></table>`,
 		Intent:      domain.ScalarIntent{Label: "data", Purpose: "nested cell data", Type: domain.TypeNumber},
 		Binding:     domain.Binding{ID: "b39", IntentKind: domain.IntentScalar, Locators: []domain.Locator{{Target: "data", Dialect: extract.DialectCSS, Expression: "table.inner td.data"}}},
 		ExpectPass:  true,
@@ -586,7 +586,7 @@ var goldenFixtures = []GoldenFixture{
 		ID:          "fix-41-table-multicell-row-extraction",
 		Kind:        KindTable,
 		Description: "Table row extracting 3 columns in a record",
-		HTML: `<table id="summary"><tr><td class="col-a">Alpha</td><td class="col-b">Beta</td><td class="col-c">100</td></tr></table>`,
+		HTML:        `<table id="summary"><tr><td class="col-a">Alpha</td><td class="col-b">Beta</td><td class="col-c">100</td></tr></table>`,
 		Intent: domain.RecordIntent{
 			Label: "summary", Purpose: "summary row",
 			Fields: []domain.Field{
