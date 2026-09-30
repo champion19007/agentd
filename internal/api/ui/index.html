@@ -1,0 +1,1470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Agentd Dashboard — Web Observation & Verified Repair</title>
+  <style>
+    :root {
+      --bg-canvas: #090d16;
+      --bg-surface: #111827;
+      --bg-surface-elevated: #1f2937;
+      --bg-surface-hover: #2d3748;
+      --border: #374151;
+      --border-subtle: #232d3f;
+      --text-main: #f9fafb;
+      --text-muted: #9ca3af;
+      --text-faint: #6b7280;
+      --brand: #3b82f6;
+      --brand-hover: #2563eb;
+      --brand-glow: rgba(59, 130, 246, 0.2);
+      --success: #10b981;
+      --success-glow: rgba(16, 185, 129, 0.15);
+      --warning: #f59e0b;
+      --warning-glow: rgba(245, 158, 11, 0.15);
+      --danger: #ef4444;
+      --danger-glow: rgba(239, 68, 68, 0.15);
+      --purple: #8b5cf6;
+      --code-bg: #030712;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root[data-theme="light"] {
+        --bg-canvas: #f3f4f6;
+        --bg-surface: #ffffff;
+        --bg-surface-elevated: #f9fafb;
+        --bg-surface-hover: #edf2f7;
+        --border: #e5e7eb;
+        --border-subtle: #f3f4f6;
+        --text-main: #111827;
+        --text-muted: #4b5563;
+        --text-faint: #9ca3af;
+        --brand: #2563eb;
+        --brand-hover: #1d4ed8;
+        --brand-glow: rgba(37, 99, 235, 0.12);
+        --code-bg: #f8fafc;
+      }
+    }
+
+    :root[data-theme="light"] {
+      --bg-canvas: #f3f4f6;
+      --bg-surface: #ffffff;
+      --bg-surface-elevated: #f9fafb;
+      --bg-surface-hover: #edf2f7;
+      --border: #e5e7eb;
+      --border-subtle: #f3f4f6;
+      --text-main: #111827;
+      --text-muted: #4b5563;
+      --text-faint: #9ca3af;
+      --brand: #2563eb;
+      --brand-hover: #1d4ed8;
+      --brand-glow: rgba(37, 99, 235, 0.12);
+      --code-bg: #f8fafc;
+    }
+
+    :root[data-theme="dark"] {
+      --bg-canvas: #090d16;
+      --bg-surface: #111827;
+      --bg-surface-elevated: #1f2937;
+      --bg-surface-hover: #2d3748;
+      --border: #374151;
+      --border-subtle: #232d3f;
+      --text-main: #f9fafb;
+      --text-muted: #9ca3af;
+      --text-faint: #6b7280;
+      --brand: #3b82f6;
+      --brand-hover: #2563eb;
+      --brand-glow: rgba(59, 130, 246, 0.2);
+      --code-bg: #030712;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background-color: var(--bg-canvas);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      line-height: 1.5;
+    }
+
+    header {
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0.85rem 1.75rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      backdrop-filter: blur(12px);
+    }
+
+    .brand-section {
+      display: flex;
+      align-items: center;
+      gap: 0.85rem;
+    }
+
+    .logo-badge {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 800;
+      font-size: 1.1rem;
+      box-shadow: 0 0 15px var(--brand-glow);
+    }
+
+    .brand-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-title span {
+      color: var(--brand);
+    }
+
+    .version-tag {
+      font-size: 0.72rem;
+      padding: 2px 7px;
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: 9999px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-weight: 600;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .status-badge-live {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      font-size: 0.8rem;
+      padding: 0.3rem 0.75rem;
+      background: var(--success-glow);
+      color: var(--success);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      border-radius: 9999px;
+      font-weight: 600;
+    }
+
+    .status-badge-live .pulse-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--success);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.95); opacity: 0.8; }
+      50% { transform: scale(1.35); opacity: 1; }
+      100% { transform: scale(0.95); opacity: 0.8; }
+    }
+
+    button, .btn {
+      font-family: inherit;
+      font-size: 0.85rem;
+      font-weight: 600;
+      padding: 0.45rem 0.9rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg-surface-elevated);
+      color: var(--text-main);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.45rem;
+      transition: all 0.15s ease;
+      text-decoration: none;
+    }
+
+    button:hover, .btn:hover {
+      background: var(--bg-surface-hover);
+      border-color: var(--text-muted);
+    }
+
+    button.primary, .btn.primary {
+      background: var(--brand);
+      border-color: var(--brand);
+      color: white;
+    }
+
+    button.primary:hover, .btn.primary:hover {
+      background: var(--brand-hover);
+    }
+
+    button.success, .btn.success {
+      background: var(--success);
+      border-color: var(--success);
+      color: white;
+    }
+
+    button.danger, .btn.danger {
+      background: var(--danger);
+      border-color: var(--danger);
+      color: white;
+    }
+
+    .main-layout {
+      display: flex;
+      flex: 1;
+    }
+
+    nav.sidebar {
+      width: 230px;
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border);
+      padding: 1.25rem 0.75rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      padding: 0.6rem 0.85rem;
+      border-radius: 6px;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .nav-item:hover {
+      background: var(--bg-surface-hover);
+      color: var(--text-main);
+    }
+
+    .nav-item.active {
+      background: var(--brand-glow);
+      color: var(--brand);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+    }
+
+    .nav-badge {
+      margin-left: auto;
+      font-size: 0.7rem;
+      padding: 1px 6px;
+      border-radius: 9999px;
+      background: var(--bg-surface-elevated);
+      color: var(--text-muted);
+    }
+
+    .nav-item.active .nav-badge {
+      background: var(--brand);
+      color: white;
+    }
+
+    .content-area {
+      flex: 1;
+      padding: 1.75rem;
+      overflow-y: auto;
+      max-width: 1400px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    /* Metric Cards */
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1.15rem;
+      margin-bottom: 1.75rem;
+    }
+
+    .card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.15rem;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    .metric-card-header {
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--text-muted);
+      margin-bottom: 0.4rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .metric-card-value {
+      font-size: 1.85rem;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      color: var(--text-main);
+      display: flex;
+      align-items: baseline;
+      gap: 0.5rem;
+    }
+
+    .metric-card-sub {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 0.35rem;
+    }
+
+    /* Tables */
+    .table-container {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      margin-top: 1rem;
+    }
+
+    .table-toolbar {
+      padding: 0.85rem 1.15rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      background: var(--bg-surface-elevated);
+    }
+
+    .search-input {
+      font-family: inherit;
+      background: var(--bg-canvas);
+      border: 1px solid var(--border);
+      padding: 0.4rem 0.8rem;
+      border-radius: 6px;
+      color: var(--text-main);
+      font-size: 0.85rem;
+      width: 260px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.86rem;
+    }
+
+    th {
+      background: var(--bg-surface-elevated);
+      padding: 0.75rem 1.15rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    td {
+      padding: 0.85rem 1.15rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    tr:hover td {
+      background: var(--bg-surface-hover);
+    }
+
+    /* Badges */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      font-size: 0.74rem;
+      font-weight: 600;
+      padding: 0.18rem 0.55rem;
+      border-radius: 9999px;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+    }
+
+    .badge-quiet { background: rgba(156, 163, 175, 0.15); color: #9ca3af; }
+    .badge-changed { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
+    .badge-degraded { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+    .badge-failed { background: rgba(239, 68, 68, 0.15); color: #f87171; }
+    .badge-interrupted { background: rgba(217, 119, 6, 0.15); color: #f59e0b; }
+    .badge-skipped { background: rgba(139, 92, 246, 0.15); color: #a78bfa; }
+    .badge-active { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+    .badge-disabled { background: rgba(107, 114, 128, 0.15); color: #9ca3af; }
+
+    /* Modals & Dialogs */
+    dialog {
+      background: var(--bg-surface);
+      color: var(--text-main);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.75rem;
+      max-width: 620px;
+      width: 90vw;
+      margin: auto;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.3);
+    }
+
+    dialog::backdrop {
+      background: rgba(0, 0, 0, 0.7);
+      backdrop-filter: blur(4px);
+    }
+
+    .dialog-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.25rem;
+    }
+
+    .dialog-title {
+      font-size: 1.15rem;
+      font-weight: 700;
+    }
+
+    .form-group {
+      margin-bottom: 1rem;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 0.35rem;
+    }
+
+    .form-control {
+      width: 100%;
+      background: var(--bg-canvas);
+      border: 1px solid var(--border);
+      color: var(--text-main);
+      padding: 0.5rem 0.75rem;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 0.88rem;
+    }
+
+    .form-control:focus {
+      outline: none;
+      border-color: var(--brand);
+      box-shadow: 0 0 0 2px var(--brand-glow);
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    .dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.75rem;
+      margin-top: 1.5rem;
+    }
+
+    /* Verification Gate Badges */
+    .gate-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+      margin-top: 0.45rem;
+    }
+
+    .gate-badge {
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      font-family: var(--font-mono);
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border);
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+    }
+
+    .gate-badge.passed {
+      background: rgba(16, 185, 129, 0.12);
+      border-color: rgba(16, 185, 129, 0.3);
+      color: var(--success);
+    }
+
+    .gate-badge.failed {
+      background: rgba(239, 68, 68, 0.12);
+      border-color: rgba(239, 68, 68, 0.3);
+      color: var(--danger);
+    }
+
+    /* Code & Diffs */
+    pre, code {
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+    }
+
+    .code-box {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.75rem;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    /* Toast Notifications */
+    .toast-container {
+      position: fixed;
+      bottom: 1.5rem;
+      right: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      z-index: 100;
+    }
+
+    .toast {
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border);
+      color: var(--text-main);
+      padding: 0.75rem 1.15rem;
+      border-radius: 6px;
+      font-size: 0.86rem;
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      box-shadow: 0 10px 15px -3px rgba(0,0,0,0.3);
+      animation: slideIn 0.2s ease-out;
+    }
+
+    @keyframes slideIn {
+      from { transform: translateX(100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    .toast.success { border-color: var(--success); }
+    .toast.danger { border-color: var(--danger); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand-section">
+      <div class="logo-badge">A</div>
+      <div class="brand-title">Agent<span>d</span></div>
+      <span class="version-tag">v1.0.0</span>
+      <span class="version-tag" style="background: rgba(59,130,246,0.1); color: var(--brand); border-color: rgba(59,130,246,0.25);">Single Static Binary</span>
+    </div>
+
+    <div class="header-actions">
+      <div id="liveStatusBadge" class="status-badge-live">
+        <span class="pulse-dot"></span>
+        <span>Daemon Active</span>
+      </div>
+      <button id="refreshBtn" onclick="refreshAll()" title="Refresh Dashboard">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+        <span>Sync</span>
+      </button>
+      <button id="themeToggle" onclick="toggleTheme()" title="Toggle Light/Dark Theme">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+      </button>
+      <button class="primary" onclick="openAddCheckModal()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <span>Add Check</span>
+      </button>
+    </div>
+  </header>
+
+  <div class="main-layout">
+    <nav class="sidebar">
+      <a class="nav-item active" onclick="switchTab('checks', this)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        <span>Checks</span>
+        <span id="tabCountChecks" class="nav-badge">0</span>
+      </a>
+      <a class="nav-item" onclick="switchTab('runs', this)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <span>Runs & History</span>
+        <span id="tabCountRuns" class="nav-badge">0</span>
+      </a>
+      <a class="nav-item" onclick="switchTab('incidents', this)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <span>Incidents & Repair</span>
+        <span id="tabCountIncidents" class="nav-badge" style="background: rgba(239,68,68,0.2); color: #f87171;">0</span>
+      </a>
+      <a class="nav-item" onclick="switchTab('audit', this)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        <span>Audit Trail</span>
+      </a>
+      <a class="nav-item" onclick="switchTab('mcp', this)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+        <span>MCP & API Tools</span>
+      </a>
+      <a class="nav-item" onclick="switchTab('maintenance', this)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+        <span>Maintenance & DB</span>
+      </a>
+    </nav>
+
+    <main class="content-area">
+      <!-- Metric Cards -->
+      <section class="metric-grid">
+        <div class="card">
+          <div class="metric-card-header">
+            <span>Configured Checks</span>
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          </div>
+          <div class="metric-card-value">
+            <span id="metricActiveChecks">0</span>
+            <span style="font-size: 1rem; color: var(--text-muted); font-weight: 500;">/ <span id="metricTotalChecks">0</span> active</span>
+          </div>
+          <div class="metric-card-sub">Continuous monitoring loops</div>
+        </div>
+
+        <div class="card">
+          <div class="metric-card-header">
+            <span>Observation Freshness SLI</span>
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          </div>
+          <div class="metric-card-value">
+            <span id="metricFreshCount" style="color: var(--success);">0</span>
+            <span style="font-size: 1rem; color: var(--text-muted); font-weight: 500;">fresh</span>
+          </div>
+          <div class="metric-card-sub" id="metricStalenessSub">Max Staleness: 0.0s</div>
+        </div>
+
+        <div class="card">
+          <div class="metric-card-header">
+            <span>Dispatch & Worker Pool</span>
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+          </div>
+          <div class="metric-card-value">
+            <span id="metricActiveRuns">0</span>
+            <span style="font-size: 1rem; color: var(--text-muted); font-weight: 500;">active (<span id="metricQueueDepth">0</span> queued)</span>
+          </div>
+          <div class="metric-card-sub">Bounded concurrency ceiling</div>
+        </div>
+
+        <div class="card">
+          <div class="metric-card-header">
+            <span>Open Breakage Incidents</span>
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+          </div>
+          <div class="metric-card-value">
+            <span id="metricOpenIncidents" style="color: var(--danger);">0</span>
+            <span style="font-size: 1rem; color: var(--text-muted); font-weight: 500;">requiring human sign-off</span>
+          </div>
+          <div class="metric-card-sub">Circuit breaker: &le; 5 open</div>
+        </div>
+      </section>
+
+      <!-- TAB 1: CHECKS -->
+      <section id="tab-checks" class="tab-content">
+        <div class="table-container">
+          <div class="table-toolbar">
+            <input type="text" class="search-input" id="searchChecks" placeholder="Filter checks by ID, name, intent..." oninput="filterChecksTable()">
+            <div>
+              <button onclick="refreshChecks()">Reload</button>
+              <button class="primary" onclick="openAddCheckModal()">+ New Check</button>
+            </div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Check ID / Name</th>
+                <th>Intent & Type</th>
+                <th>Target URL</th>
+                <th>Schedule</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="checksTableBody">
+              <tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 2rem;">Loading checks...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- TAB 2: RUNS -->
+      <section id="tab-runs" class="tab-content" style="display: none;">
+        <div class="table-container">
+          <div class="table-toolbar">
+            <input type="text" class="search-input" id="searchRuns" placeholder="Filter runs by check ID, state..." oninput="filterRunsTable()">
+            <button onclick="refreshRuns()">Reload Runs</button>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Run ID</th>
+                <th>Check ID</th>
+                <th>Terminal State</th>
+                <th>Duration</th>
+                <th>Gating & Triage</th>
+                <th>Executed At</th>
+                <th>Payload</th>
+              </tr>
+            </thead>
+            <tbody id="runsTableBody">
+              <tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 2rem;">Loading execution runs...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- TAB 3: INCIDENTS -->
+      <section id="tab-incidents" class="tab-content" style="display: none;">
+        <div class="table-container">
+          <div class="table-toolbar">
+            <div style="font-weight: 600;">Autonomous Breakage & Verified Repair Studio</div>
+            <button onclick="refreshIncidents()">Reload Incidents</button>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Incident ID</th>
+                <th>Check ID</th>
+                <th>Failure Class</th>
+                <th>Candidate Repair Locator</th>
+                <th>5-Gate Sanity Verification</th>
+                <th>Approval Status</th>
+                <th>Decision Action</th>
+              </tr>
+            </thead>
+            <tbody id="incidentsTableBody">
+              <tr><td colspan="7" style="text-align: center; color: var(--text-muted); padding: 2rem;">Loading incidents...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- TAB 4: AUDIT TRAIL -->
+      <section id="tab-audit" class="tab-content" style="display: none;">
+        <div class="table-container">
+          <div class="table-toolbar">
+            <div style="font-weight: 600;">Append-Only Cryptographic Audit Trail</div>
+            <button onclick="refreshAudit()">Reload Audit</button>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Sequence</th>
+                <th>Event Type</th>
+                <th>Entity ID</th>
+                <th>Actor</th>
+                <th>Summary / Details</th>
+                <th>Timestamp (UTC)</th>
+              </tr>
+            </thead>
+            <tbody id="auditTableBody">
+              <tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 2rem;">Loading audit records...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- TAB 5: MCP & API TOOLS -->
+      <section id="tab-mcp" class="tab-content" style="display: none;">
+        <div class="card" style="margin-bottom: 1.5rem;">
+          <h3 style="margin-bottom: 0.5rem; font-size: 1.05rem;">Model Context Protocol (MCP) JSON-RPC Tester</h3>
+          <p style="font-size: 0.84rem; color: var(--text-muted); margin-bottom: 1rem;">
+            Agentd exposes 7 read-only inspection tools over stdio and HTTP POST (<code>/v1/mcp</code>). Test agent tool calls below:
+          </p>
+          <div class="form-row" style="margin-bottom: 1rem;">
+            <div class="form-group">
+              <label>Select Tool Call</label>
+              <select class="form-control" id="mcpToolSelect" onchange="onMCPToolChange()">
+                <option value="tools/list">tools/list — Enumerate all 7 tools</option>
+                <option value="inspect_status">inspect_status — System freshness and health</option>
+                <option value="inspect_check">inspect_check — Check definition & active binding</option>
+                <option value="inspect_run">inspect_run — Run execution details & diff</option>
+                <option value="inspect_incident">inspect_incident — Incident root cause & candidate repair</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Parameter ID (e.g. check_id, run_id, incident_id)</label>
+              <input type="text" class="form-control" id="mcpParamId" placeholder="Optional identifier">
+            </div>
+          </div>
+          <button class="primary" onclick="executeMCPCall()">Send MCP Request</button>
+          <div style="margin-top: 1rem;">
+            <label style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted); display: block; margin-bottom: 0.35rem;">JSON-RPC Response</label>
+            <pre class="code-box" id="mcpOutput">{"status": "ready"}</pre>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 style="margin-bottom: 0.5rem; font-size: 1.05rem;">Local REST API Quick Reference</h3>
+          <p style="font-size: 0.84rem; color: var(--text-muted); margin-bottom: 1rem;">
+            All mutations require loopback origin; cross-origin browser requests are strictly rejected.
+          </p>
+          <div class="code-box">
+# Get daemon health & freshness SLI
+curl -s http://127.0.0.1:8080/v1/status | jq
+
+# List all checks
+curl -s http://127.0.0.1:8080/v1/checks | jq
+
+# Trigger manual run for a check
+curl -X POST http://127.0.0.1:8080/v1/checks/price-tracker/run
+
+# Approve a verified repair (requires human signature)
+curl -X POST http://127.0.0.1:8080/v1/incidents/inc-1/approve \
+  -H "Content-Type: application/json" \
+  -d '{"by": "senior-engineer", "reason": "verified layout shift"}'
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB 6: MAINTENANCE -->
+      <section id="tab-maintenance" class="tab-content" style="display: none;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+          <div class="card">
+            <h3 style="margin-bottom: 0.5rem; font-size: 1.05rem;">Retention Garbage Collection (GC)</h3>
+            <p style="font-size: 0.84rem; color: var(--text-muted); margin-bottom: 1rem;">
+              Prunes old historical runs and non-essential snapshots according to retention invariants. Preserves all known-good snapshots and open incidents.
+            </p>
+            <button class="warning" onclick="triggerGC()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              <span>Run Retention Sweep Now</span>
+            </button>
+            <div id="gcResult" style="margin-top: 1rem; font-size: 0.84rem; color: var(--text-muted);"></div>
+          </div>
+
+          <div class="card">
+            <h3 style="margin-bottom: 0.5rem; font-size: 1.05rem;">Atomic SQLite Live Backup</h3>
+            <p style="font-size: 0.84rem; color: var(--text-muted); margin-bottom: 1rem;">
+              Performs safe checkpointed <code>VACUUM INTO</code> backup while writers and readers continue without locks. File created with strict 0600 permissions.
+            </p>
+            <div class="form-group">
+              <label>Backup Destination Path</label>
+              <input type="text" class="form-control" id="backupPathInput" placeholder="agentd_backup.db">
+            </div>
+            <button class="primary" onclick="triggerBackup()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              <span>Create Verified Backup</span>
+            </button>
+            <div id="backupResult" style="margin-top: 1rem; font-size: 0.84rem; color: var(--text-muted);"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Add Check Modal Dialog -->
+  <dialog id="addCheckDialog">
+    <div class="dialog-header">
+      <div class="dialog-title">Configure New Observation Check</div>
+      <button onclick="document.getElementById('addCheckDialog').close()">✕</button>
+    </div>
+    <form id="addCheckForm" onsubmit="submitNewCheck(event)">
+      <div class="form-row">
+        <div class="form-group">
+          <label for="newCheckId">Check Identifier (ID)*</label>
+          <input type="text" id="newCheckId" class="form-control" placeholder="e.g. price-tracker" required>
+        </div>
+        <div class="form-group">
+          <label for="newCheckName">Human-Readable Name</label>
+          <input type="text" id="newCheckName" class="form-control" placeholder="e.g. Production Pricing Check">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="newCheckURL">Target HTTP/HTTPS URL*</label>
+        <input type="url" id="newCheckURL" class="form-control" placeholder="https://example.com/products/pro" required>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="newCheckIntent">Extraction Intent Kind*</label>
+          <select id="newCheckIntent" class="form-control">
+            <option value="scalar">Scalar Intent (Single Value)</option>
+            <option value="record">Record Intent (Structured Fields)</option>
+            <option value="collection">Collection Intent (List of Items)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="newCheckType">Expected Data Type</label>
+          <select id="newCheckType" class="form-control">
+            <option value="currency">Currency / Number ($XX.XX)</option>
+            <option value="text">Raw Text</option>
+            <option value="number">Numeric Float / Integer</option>
+            <option value="boolean">Boolean Flag</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="newCheckLocator">DOM CSS Selector (Binding)*</label>
+        <input type="text" id="newCheckLocator" class="form-control" placeholder=".price-tag, span.amount" required>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label for="newCheckInterval">Interval Duration*</label>
+          <input type="text" id="newCheckInterval" class="form-control" placeholder="15m, 1h, 4h" value="1h" required>
+        </div>
+        <div class="form-group">
+          <label for="newCheckJitter">Max Jitter Duration</label>
+          <input type="text" id="newCheckJitter" class="form-control" placeholder="1m, 5m" value="1m">
+        </div>
+      </div>
+
+      <div class="dialog-actions">
+        <button type="button" onclick="document.getElementById('addCheckDialog').close()">Cancel</button>
+        <button type="submit" class="primary">Add & Schedule Check</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Repair Approval Modal Dialog -->
+  <dialog id="approveRepairDialog">
+    <div class="dialog-header">
+      <div class="dialog-title">Approve Candidate Repair</div>
+      <button onclick="document.getElementById('approveRepairDialog').close()">✕</button>
+    </div>
+    <form id="approveRepairForm" onsubmit="submitRepairApproval(event)">
+      <input type="hidden" id="approveIncidentId">
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">
+        By foundational architectural invariant, <strong>repair is NEVER automatically applied</strong>. An operator must explicitly review and sign off.
+      </p>
+
+      <div class="form-group">
+        <label>Proposed Candidate Locator</label>
+        <div id="approveCandidateLocator" class="code-box" style="margin-bottom: 0.5rem;"></div>
+      </div>
+
+      <div class="form-group">
+        <label for="approveOperatorBy">Operator Signature (--by)*</label>
+        <input type="text" id="approveOperatorBy" class="form-control" placeholder="e.g. alice, devops-oncall" required>
+      </div>
+
+      <div class="form-group">
+        <label for="approveReason">Approval Rationale / Notes</label>
+        <input type="text" id="approveReason" class="form-control" placeholder="e.g. verified new DOM grid after redesign">
+      </div>
+
+      <div class="dialog-actions">
+        <button type="button" onclick="document.getElementById('approveRepairDialog').close()">Cancel</button>
+        <button type="submit" class="success">Approve & Activate Binding</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script>
+    let currentTab = 'checks';
+    let rawChecks = [];
+    let rawRuns = [];
+    let rawIncidents = [];
+
+    // Theme initialization
+    function initTheme() {
+      const saved = localStorage.getItem('agentd-theme') || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+      document.documentElement.setAttribute('data-theme', saved);
+    }
+    initTheme();
+
+    function toggleTheme() {
+      const current = document.documentElement.getAttribute('data-theme') || 'dark';
+      const next = current === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('agentd-theme', next);
+    }
+
+    function showToast(msg, type = 'info') {
+      const c = document.getElementById('toastContainer');
+      const t = document.createElement('div');
+      t.className = `toast ${type}`;
+      t.textContent = msg;
+      c.appendChild(t);
+      setTimeout(() => {
+        t.style.opacity = '0';
+        t.style.transition = 'opacity 0.3s ease';
+        setTimeout(() => t.remove(), 300);
+      }, 4000);
+    }
+
+    function switchTab(tabId, el) {
+      document.querySelectorAll('.tab-content').forEach(s => s.style.display = 'none');
+      document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+      const target = document.getElementById(`tab-${tabId}`);
+      if (target) target.style.display = 'block';
+      if (el) el.classList.add('active');
+      currentTab = tabId;
+
+      if (tabId === 'checks') refreshChecks();
+      if (tabId === 'runs') refreshRuns();
+      if (tabId === 'incidents') refreshIncidents();
+      if (tabId === 'audit') refreshAudit();
+    }
+
+    async function fetchAPI(url, options = {}) {
+      try {
+        const res = await fetch(url, options);
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(errText || `HTTP ${res.status}`);
+        }
+        return await res.json();
+      } catch (err) {
+        showToast(err.message, 'danger');
+        throw err;
+      }
+    }
+
+    // Refresh Status
+    async function refreshStatus() {
+      try {
+        const data = await fetchAPI('/v1/status');
+        document.getElementById('metricTotalChecks').textContent = data.checks_total ?? 0;
+        document.getElementById('metricActiveChecks').textContent = data.checks_active ?? 0;
+        document.getElementById('metricFreshCount').textContent = data.fresh_count ?? 0;
+        document.getElementById('metricStalenessSub').textContent = `Max Staleness: ${(data.max_staleness_seconds || 0).toFixed(1)}s`;
+        document.getElementById('metricActiveRuns').textContent = data.active_runs ?? 0;
+        document.getElementById('metricQueueDepth').textContent = data.queue_depth ?? 0;
+        document.getElementById('metricOpenIncidents').textContent = data.open_incidents ?? 0;
+        document.getElementById('tabCountChecks').textContent = data.checks_total ?? 0;
+        document.getElementById('tabCountIncidents').textContent = data.open_incidents ?? 0;
+      } catch (e) {
+        document.getElementById('liveStatusBadge').style.borderColor = 'var(--danger)';
+        document.getElementById('liveStatusBadge').style.color = 'var(--danger)';
+        document.getElementById('liveStatusBadge').innerHTML = '<span class="pulse-dot" style="background:var(--danger)"></span> Connecting...';
+      }
+    }
+
+    // Refresh Checks
+    async function refreshChecks() {
+      try {
+        const checks = await fetchAPI('/v1/checks');
+        rawChecks = checks || [];
+        renderChecksTable(rawChecks);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function renderChecksTable(checks) {
+      const tbody = document.getElementById('checksTableBody');
+      if (!checks.length) {
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding: 2.5rem; color: var(--text-muted);">
+          No checks configured yet. Click <strong>+ New Check</strong> above to start monitoring.
+        </td></tr>`;
+        return;
+      }
+      tbody.innerHTML = checks.map(c => `
+        <tr>
+          <td>
+            <div style="font-weight: 600; color: var(--text-main);">${escapeHTML(c.id)}</div>
+            <div style="font-size: 0.76rem; color: var(--text-muted);">${escapeHTML(c.name || 'Untitled')}</div>
+          </td>
+          <td>
+            <span class="badge" style="background: rgba(59,130,246,0.15); color: #60a5fa;">${escapeHTML(c.intent_kind || 'scalar')}</span>
+          </td>
+          <td style="max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+            <a href="${escapeHTML(c.url)}" target="_blank" rel="noopener" style="color: var(--brand); text-decoration: none;">${escapeHTML(c.url)}</a>
+          </td>
+          <td style="font-family: var(--font-mono); font-size: 0.8rem;">
+            ${escapeHTML(c.interval || '1h')}
+          </td>
+          <td>
+            <span class="badge ${c.enabled ? 'badge-active' : 'badge-disabled'}">
+              ${c.enabled ? '● Active' : 'Disabled'}
+            </span>
+          </td>
+          <td>
+            <div style="display: flex; gap: 0.4rem;">
+              <button onclick="runCheckNow('${escapeHTML(c.id)}')">Run Now</button>
+              <button class="danger" onclick="deleteCheck('${escapeHTML(c.id)}')">Delete</button>
+            </div>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function filterChecksTable() {
+      const query = document.getElementById('searchChecks').value.toLowerCase();
+      const filtered = rawChecks.filter(c => 
+        c.id.toLowerCase().includes(query) || 
+        (c.name && c.name.toLowerCase().includes(query)) ||
+        (c.url && c.url.toLowerCase().includes(query))
+      );
+      renderChecksTable(filtered);
+    }
+
+    async function runCheckNow(checkId) {
+      try {
+        await fetchAPI(`/v1/checks/${checkId}/run`, { method: 'POST' });
+        showToast(`Dispatched run for check ${checkId}`, 'success');
+        refreshStatus();
+        refreshRuns();
+      } catch (e) {
+        showToast(`Failed to dispatch check: ${e.message}`, 'danger');
+      }
+    }
+
+    async function deleteCheck(checkId) {
+      if (!confirm(`Are you sure you want to permanently delete check "${checkId}"?`)) return;
+      try {
+        await fetchAPI(`/v1/checks/${checkId}`, { method: 'DELETE' });
+        showToast(`Deleted check ${checkId}`, 'success');
+        refreshStatus();
+        refreshChecks();
+      } catch (e) {
+        showToast(`Failed to delete check: ${e.message}`, 'danger');
+      }
+    }
+
+    // Refresh Runs
+    async function refreshRuns() {
+      try {
+        const runs = await fetchAPI('/v1/runs');
+        rawRuns = runs || [];
+        document.getElementById('tabCountRuns').textContent = rawRuns.length;
+        renderRunsTable(rawRuns);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function renderRunsTable(runs) {
+      const tbody = document.getElementById('runsTableBody');
+      if (!runs.length) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 2.5rem; color: var(--text-muted);">
+          No execution runs recorded yet.
+        </td></tr>`;
+        return;
+      }
+      tbody.innerHTML = runs.map(r => `
+        <tr>
+          <td style="font-family: var(--font-mono); font-size: 0.78rem;">${escapeHTML(r.id)}</td>
+          <td style="font-weight: 600;">${escapeHTML(r.check_id)}</td>
+          <td>
+            <span class="badge badge-${escapeHTML(r.state)}">${escapeHTML(r.state)}</span>
+          </td>
+          <td style="font-family: var(--font-mono); font-size: 0.8rem;">
+            ${r.duration_ms ? r.duration_ms + 'ms' : '-'}
+          </td>
+          <td>
+            ${r.model_invoked ? 
+              '<span class="badge badge-changed">🤖 Model Triage</span>' : 
+              '<span class="badge badge-active">⚡ Hash-Gated (0 Tokens)</span>'}
+          </td>
+          <td style="color: var(--text-muted); font-size: 0.8rem;">
+            ${r.started_at ? new Date(r.started_at).toLocaleTimeString() : '-'}
+          </td>
+          <td style="font-family: var(--font-mono); font-size: 0.8rem; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+            ${escapeHTML(r.extracted_value || '-')}
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function filterRunsTable() {
+      const query = document.getElementById('searchRuns').value.toLowerCase();
+      const filtered = rawRuns.filter(r => 
+        r.id.toLowerCase().includes(query) || 
+        r.check_id.toLowerCase().includes(query) ||
+        r.state.toLowerCase().includes(query)
+      );
+      renderRunsTable(filtered);
+    }
+
+    // Refresh Incidents
+    async function refreshIncidents() {
+      try {
+        const incidents = await fetchAPI('/v1/incidents');
+        rawIncidents = incidents || [];
+        renderIncidentsTable(rawIncidents);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function renderIncidentsTable(incidents) {
+      const tbody = document.getElementById('incidentsTableBody');
+      if (!incidents.length) {
+        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 2.5rem; color: var(--success);">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-bottom:0.5rem; display:block; margin:0 auto 0.5rem auto;"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+          Zero open breakage incidents. All checks operating normally.
+        </td></tr>`;
+        return;
+      }
+      tbody.innerHTML = incidents.map(inc => `
+        <tr>
+          <td style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600;">${escapeHTML(inc.id)}</td>
+          <td style="font-weight: 600;">${escapeHTML(inc.check_id)}</td>
+          <td>
+            <span class="badge badge-failed">${escapeHTML(inc.failure_class || 'structural')}</span>
+          </td>
+          <td>
+            <code class="code-box" style="padding: 2px 6px; font-size: 0.78rem;">${escapeHTML(inc.candidate_locator || '(generation in progress)')}</code>
+          </td>
+          <td>
+            <div class="gate-list">
+              <span class="gate-badge ${inc.gate_g1 ? 'passed' : 'failed'}">G1 Structural</span>
+              <span class="gate-badge ${inc.gate_g2 ? 'passed' : 'failed'}">G2 Shape</span>
+              <span class="gate-badge ${inc.gate_g3 ? 'passed' : 'failed'}">G3 Stability</span>
+              <span class="gate-badge ${inc.gate_g4 ? 'passed' : 'failed'}">G4 Independent</span>
+              <span class="gate-badge ${inc.gate_g5 ? 'passed' : 'failed'}">G5 Continuity</span>
+            </div>
+          </td>
+          <td>
+            <span class="badge ${inc.state === 'open' ? 'badge-failed' : 'badge-active'}">${escapeHTML(inc.state)}</span>
+          </td>
+          <td>
+            ${inc.state === 'open' ? `
+              <button class="success" onclick="openApproveModal('${escapeHTML(inc.id)}', '${escapeHTML(inc.candidate_locator || '')}')">Approve...</button>
+              <button class="danger" onclick="rejectRepair('${escapeHTML(inc.id)}')">Reject</button>
+            ` : '<span style="color:var(--text-muted); font-size:0.8rem;">Closed</span>'}
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function openApproveModal(incidentId, candidateLocator) {
+      document.getElementById('approveIncidentId').value = incidentId;
+      document.getElementById('approveCandidateLocator').textContent = candidateLocator || '(No candidate selector)';
+      document.getElementById('approveOperatorBy').value = '';
+      document.getElementById('approveReason').value = '';
+      document.getElementById('approveRepairDialog').showModal();
+    }
+
+    async function submitRepairApproval(e) {
+      e.preventDefault();
+      const id = document.getElementById('approveIncidentId').value;
+      const by = document.getElementById('approveOperatorBy').value.trim();
+      const reason = document.getElementById('approveReason').value.trim();
+      try {
+        await fetchAPI(`/v1/incidents/${id}/approve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ by, reason })
+        });
+        showToast(`Repair approved and activated by ${by}`, 'success');
+        document.getElementById('approveRepairDialog').close();
+        refreshStatus();
+        refreshIncidents();
+        refreshChecks();
+      } catch (err) {
+        showToast(`Approval failed: ${err.message}`, 'danger');
+      }
+    }
+
+    async function rejectRepair(id) {
+      const reason = prompt('Enter reason for rejecting this candidate repair:');
+      if (!reason) return;
+      try {
+        await fetchAPI(`/v1/incidents/${id}/reject`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ by: 'operator', reason })
+        });
+        showToast(`Incident ${id} rejected`, 'success');
+        refreshStatus();
+        refreshIncidents();
+      } catch (err) {
+        showToast(`Rejection failed: ${err.message}`, 'danger');
+      }
+    }
+
+    // Refresh Audit
+    async function refreshAudit() {
+      try {
+        const audit = await fetchAPI('/v1/audit');
+        const tbody = document.getElementById('auditTableBody');
+        if (!audit.length) {
+          tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding: 2.5rem; color: var(--text-muted);">No audit events recorded yet.</td></tr>`;
+          return;
+        }
+        tbody.innerHTML = audit.map(a => `
+          <tr>
+            <td style="font-family: var(--font-mono); font-size: 0.78rem;">#${a.seq || 0}</td>
+            <td><span class="badge" style="background: rgba(139,92,246,0.15); color: #a78bfa;">${escapeHTML(a.event_type)}</span></td>
+            <td style="font-weight: 600;">${escapeHTML(a.entity_id || '-')}</td>
+            <td style="font-family: var(--font-mono); font-size: 0.8rem;">${escapeHTML(a.actor || 'agentd')}</td>
+            <td style="font-size: 0.82rem;">${escapeHTML(a.details || '-')}</td>
+            <td style="color: var(--text-muted); font-size: 0.8rem;">${a.timestamp ? new Date(a.timestamp).toLocaleString() : '-'}</td>
+          </tr>
+        `).join('');
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    // Maintenance Handlers
+    async function triggerGC() {
+      try {
+        const res = await fetchAPI('/v1/gc', { method: 'POST' });
+        document.getElementById('gcResult').innerHTML = `<span style="color:var(--success);">✔ GC Sweep Complete:</span> Pruned ${res.snapshots || 0} snapshots, ${res.runs || 0} runs, ${res.incidents || 0} incidents.`;
+        showToast('Retention sweep finished', 'success');
+        refreshStatus();
+      } catch (e) {
+        document.getElementById('gcResult').textContent = `GC failed: ${e.message}`;
+      }
+    }
+
+    async function triggerBackup() {
+      const dest = document.getElementById('backupPathInput').value.trim() || 'agentd_backup.db';
+      try {
+        const res = await fetchAPI('/v1/backup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to: dest, verify: true })
+        });
+        document.getElementById('backupResult').innerHTML = `<span style="color:var(--success);">✔ Verified Backup Created:</span> ${dest} (${res.size_bytes || 0} bytes, verified schema v${res.schema_version || 2})`;
+        showToast(`Backup successfully created at ${dest}`, 'success');
+      } catch (e) {
+        document.getElementById('backupResult').textContent = `Backup failed: ${e.message}`;
+      }
+    }
+
+    // MCP JSON-RPC Scratchpad
+    async function executeMCPCall() {
+      const tool = document.getElementById('mcpToolSelect').value;
+      const paramId = document.getElementById('mcpParamId').value.trim();
+      const output = document.getElementById('mcpOutput');
+      output.textContent = "Executing...";
+
+      let reqPayload = {};
+      if (tool === 'tools/list') {
+        reqPayload = { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} };
+      } else {
+        const toolArgs = {};
+        if (tool === 'inspect_check') toolArgs.check_id = paramId || 'price-tracker';
+        if (tool === 'inspect_run') toolArgs.run_id = paramId;
+        if (tool === 'inspect_incident') toolArgs.incident_id = paramId;
+        reqPayload = {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: tool, arguments: toolArgs }
+        };
+      }
+
+      try {
+        const res = await fetch('/v1/mcp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(reqPayload)
+        });
+        const data = await res.json();
+        output.textContent = JSON.stringify(data, null, 2);
+      } catch (err) {
+        output.textContent = `Error: ${err.message}`;
+      }
+    }
+
+    function onMCPToolChange() {
+      const tool = document.getElementById('mcpToolSelect').value;
+      const paramInput = document.getElementById('mcpParamId');
+      if (tool === 'tools/list' || tool === 'inspect_status') {
+        paramInput.disabled = true;
+        paramInput.placeholder = "Not applicable";
+      } else {
+        paramInput.disabled = false;
+        paramInput.placeholder = "Enter " + tool.split('_')[1] + "_id";
+      }
+    }
+
+    // Add Check Modal
+    function openAddCheckModal() {
+      document.getElementById('addCheckForm').reset();
+      document.getElementById('addCheckDialog').showModal();
+    }
+
+    async function submitNewCheck(e) {
+      e.preventDefault();
+      const id = document.getElementById('newCheckId').value.trim();
+      const name = document.getElementById('newCheckName').value.trim();
+      const url = document.getElementById('newCheckURL').value.trim();
+      const kind = document.getElementById('newCheckIntent').value;
+      const type = document.getElementById('newCheckType').value;
+      const locator = document.getElementById('newCheckLocator').value.trim();
+      const interval = document.getElementById('newCheckInterval').value.trim();
+      const jitter = document.getElementById('newCheckJitter').value.trim();
+
+      const payload = {
+        id,
+        name,
+        source: { kind: 'http', url },
+        intent: { kind, scalar: { name: id, type } },
+        binding: { kind: 'css', locator },
+        schedule: { interval, jitter, catch_up: 'once' },
+        enabled: true
+      };
+
+      try {
+        await fetchAPI('/v1/checks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        showToast(`Created check "${id}" successfully`, 'success');
+        document.getElementById('addCheckDialog').close();
+        refreshStatus();
+        refreshChecks();
+      } catch (err) {
+        showToast(`Failed to add check: ${err.message}`, 'danger');
+      }
+    }
+
+    function escapeHTML(str) {
+      if (!str) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+
+    function refreshAll() {
+      refreshStatus();
+      if (currentTab === 'checks') refreshChecks();
+      if (currentTab === 'runs') refreshRuns();
+      if (currentTab === 'incidents') refreshIncidents();
+      if (currentTab === 'audit') refreshAudit();
+      showToast('Dashboard synchronized with daemon', 'info');
+    }
+
+    // Initial load and periodic refresh every 10s
+    refreshAll();
+    setInterval(() => {
+      refreshStatus();
+      if (currentTab === 'checks') refreshChecks();
+      if (currentTab === 'runs') refreshRuns();
+      if (currentTab === 'incidents') refreshIncidents();
+    }, 10000);
+  </script>
+</body>
+</html>

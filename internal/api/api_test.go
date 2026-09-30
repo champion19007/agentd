@@ -503,3 +503,33 @@ func TestAuditLimit_Clamped(t *testing.T) {
 		t.Errorf("expected 200 OK, got %d; body = %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestWebDashboard_ServesEmbeddedUI(t *testing.T) {
+	svc, _ := setupTestService(t)
+	handler := api.NewHandler(svc)
+
+	// 1. Root / serves embedded HTML
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = "127.0.0.1:8080"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Errorf("GET / returned code %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Errorf("GET / Content-Type = %q, want text/html", ct)
+	}
+	if !strings.Contains(rec.Body.String(), "Agentd Dashboard") {
+		t.Errorf("GET / body missing 'Agentd Dashboard'")
+	}
+
+	// 2. Unknown /v1/... route returns 404, not HTML
+	apiReq := httptest.NewRequest("GET", "/v1/unknown-endpoint", nil)
+	apiReq.Host = "127.0.0.1:8080"
+	apiRec := httptest.NewRecorder()
+	handler.ServeHTTP(apiRec, apiReq)
+	if apiRec.Code != http.StatusNotFound {
+		t.Errorf("GET /v1/unknown-endpoint code = %d, want 404", apiRec.Code)
+	}
+}

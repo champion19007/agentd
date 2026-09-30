@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,9 @@ import (
 
 	"github.com/champion19007/agentd/internal/core/domain"
 )
+
+//go:embed ui/*
+var uiFS embed.FS
 
 // DefaultBindAddress is the loopback address and port Agentd binds to by default.
 const DefaultBindAddress = "127.0.0.1:8080"
@@ -178,6 +182,26 @@ func (h *Handler) registerRoutes() {
 	h.mux.HandleFunc("/v1/audit", h.handleAudit)
 	h.mux.HandleFunc("/v1/mcp", h.handleMCP)
 	h.mux.HandleFunc("/metrics", h.handleMetrics)
+	h.mux.HandleFunc("/", h.handleUI)
+}
+
+func (h *Handler) handleUI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/v1/") {
+		http.NotFound(w, r)
+		return
+	}
+	data, err := uiFS.ReadFile("ui/index.html")
+	if err != nil {
+		http.Error(w, "ui dashboard not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 func (h *Handler) handleMCP(w http.ResponseWriter, r *http.Request) {

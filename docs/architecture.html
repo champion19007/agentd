@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Architecture — Agentd System Specification</title>
+  <link rel="stylesheet" href="index.html">
+  <style>
+    :root {
+      --bg-canvas: #090d16;
+      --bg-surface: #111827;
+      --bg-surface-elevated: #1f2937;
+      --border: #374151;
+      --text-main: #f9fafb;
+      --text-muted: #9ca3af;
+      --brand: #3b82f6;
+      --brand-hover: #2563eb;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --code-bg: #030712;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    @media (prefers-color-scheme: light) {
+      :root[data-theme="light"] {
+        --bg-canvas: #f8fafc;
+        --bg-surface: #ffffff;
+        --bg-surface-elevated: #f1f5f9;
+        --border: #e2e8f0;
+        --text-main: #0f172a;
+        --text-muted: #475569;
+        --brand: #2563eb;
+        --code-bg: #f1f5f9;
+      }
+    }
+    :root[data-theme="light"] {
+      --bg-canvas: #f8fafc;
+      --bg-surface: #ffffff;
+      --bg-surface-elevated: #f1f5f9;
+      --border: #e2e8f0;
+      --text-main: #0f172a;
+      --text-muted: #475569;
+      --brand: #2563eb;
+      --code-bg: #f1f5f9;
+    }
+    :root[data-theme="dark"] {
+      --bg-canvas: #090d16;
+      --bg-surface: #111827;
+      --bg-surface-elevated: #1f2937;
+      --border: #374151;
+      --text-main: #f9fafb;
+      --text-muted: #9ca3af;
+      --brand: #3b82f6;
+      --code-bg: #030712;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font-sans); background: var(--bg-canvas); color: var(--text-main); line-height: 1.6; }
+    nav.top-nav { position: sticky; top: 0; z-index: 100; background: var(--bg-surface); border-bottom: 1px solid var(--border); padding: 0.9rem 2rem; display: flex; align-items: center; justify-content: space-between; }
+    .nav-brand { display: flex; align-items: center; gap: 0.75rem; text-decoration: none; color: inherit; }
+    .brand-badge { width: 34px; height: 34px; border-radius: 8px; background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); display: flex; align-items: center; justify-content: center; color: white; font-weight: 800; }
+    .brand-name { font-size: 1.25rem; font-weight: 800; }
+    .brand-name span { color: var(--brand); }
+    .nav-links { display: flex; align-items: center; gap: 1.5rem; }
+    .nav-links a { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; font-weight: 600; }
+    .nav-links a.active { color: var(--brand); }
+    .container { max-width: 900px; margin: 3rem auto; padding: 0 1.5rem; }
+    h1 { font-size: 2.75rem; font-weight: 900; letter-spacing: -0.03em; margin-bottom: 1rem; line-height: 1.2; }
+    h2 { font-size: 1.75rem; font-weight: 800; letter-spacing: -0.02em; margin-top: 2.5rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
+    h3 { font-size: 1.25rem; font-weight: 700; margin-top: 1.5rem; margin-bottom: 0.5rem; }
+    p { margin-bottom: 1.25rem; color: var(--text-muted); }
+    ul, ol { margin-bottom: 1.25rem; padding-left: 1.5rem; color: var(--text-muted); }
+    li { margin-bottom: 0.5rem; }
+    pre, code { font-family: var(--font-mono); font-size: 0.85rem; }
+    .code-box { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; overflow-x: auto; margin-bottom: 1.5rem; color: #93c5fd; line-height: 1.45; }
+    .card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; }
+    .badge { display: inline-block; font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 9999px; text-transform: uppercase; }
+    .badge-success { background: rgba(16,185,129,0.15); color: var(--success); }
+    .btn { font-family: inherit; font-size: 0.85rem; font-weight: 600; padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-surface-elevated); color: var(--text-main); cursor: pointer; }
+    footer { border-top: 1px solid var(--border); background: var(--bg-surface); padding: 3rem 2rem; text-align: center; color: var(--text-muted); font-size: 0.88rem; margin-top: 5rem; }
+    footer a { color: var(--brand); text-decoration: none; }
+  </style>
+</head>
+<body>
+  <nav class="top-nav">
+    <a href="index.html" class="nav-brand">
+      <div class="brand-badge">A</div>
+      <div class="brand-name">Agent<span>d</span></div>
+    </a>
+    <div class="nav-links">
+      <a href="architecture.html" class="active">Architecture</a>
+      <a href="api.html">REST API</a>
+      <a href="mcp.html">MCP Guide</a>
+      <a href="https://github.com/champion19007/agentd" target="_blank" rel="noopener">GitHub</a>
+      <button class="btn" onclick="toggleTheme()">🌓</button>
+    </div>
+  </nav>
+
+  <div class="container">
+    <h1>Agentd System Architecture</h1>
+    <p style="font-size: 1.15rem;">
+      Agentd is designed around a single core tenet: <strong>deterministic execution must remain isolated from probabilistic AI inference</strong>. When an AI model fails, hallucinates, or goes offline, observation and scheduling must continue unabated.
+    </p>
+
+    <h2>1. Hexagonal Boundaries (Ports & Adapters)</h2>
+    <p>
+      The architecture strictly enforces clean directional boundaries. The deterministic core (<code>internal/core</code>) contains pure domain logic and is mathematically prevented from:
+    </p>
+    <ul>
+      <li>Importing concrete adapters (no <code>net/http</code>, no <code>database/sql</code>, no <code>os</code>).</li>
+      <li>Reading the system wall clock (time is injected via <code>ports.Clock</code>).</li>
+      <li>Calling non-deterministic random functions (entropy is injected via <code>ports.Random</code>).</li>
+    </ul>
+
+    <div class="code-box">
+             [ CLI ]          [ HTTP REST API ]          [ MCP Server ]
+                 \                   |                   /
+                  +------------------+------------------+
+                                     |
+                                     v
+                       [ ports.CheckOps / RunOps ]
+                                     |
+                                     v
++-------------------------------------------------------------------------+
+|                           DETERMINISTIC CORE                            |
+|                                                                         |
+|    domain.Check            domain.Run              domain.Incident      |
+|    - Intent (Semantic)     - State Machine         - Root Cause Class   |
+|    - Binding (DOM Locator) - Hash Deduplication    - Candidate Repair   |
+|                                                                         |
+|    scheduling.Scheduler    policy.TriageEngine     repair.Harness       |
+|    - Slot Computation      - Change vs Outage      - 5 Verification     |
+|    - Catch-Up Policies     - Hash Gating             Gates (G1–G5)      |
++-------------------------------------------------------------------------+
+                                     |
+                                     v
+                    [ ports.Store / Source / Model ]
+                                     |
+                  +------------------+------------------+
+                 /                   |                   \
+       [ SQLite WAL DB ]     [ HTTP Fetcher ]     [ Gemini / LLM Client ]
+    </div>
+
+    <h2>2. Separation of Semantic Intent & Fragile Binding</h2>
+    <p>
+      Conventional scrapers couple "what I want" with "how I find it" into an unstable selector string. Agentd explicitly separates them into two distinct invariants:
+    </p>
+    <div class="card">
+      <h3>The Intent (Permanent Semantic Contract)</h3>
+      <p>
+        The operator declares the immutable semantic structure they care about:
+      </p>
+      <ul>
+        <li><code>ScalarIntent</code>: A single typed observation (e.g. Price as currency, Available as boolean).</li>
+        <li><code>RecordIntent</code>: A named struct of semantic attributes (e.g. Title, Author, Rating).</li>
+        <li><code>CollectionIntent</code>: A sequence of recurring records (e.g. Search results table).</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h3>The Binding (Ephemeral Implementation Detail)</h3>
+      <p>
+        The concrete locator (e.g. CSS selector <code>.fare-box > span.val</code>) used to fulfill the intent on today's HTML DOM. When the website redesigns, only the <strong>Binding</strong> breaks; the <strong>Intent</strong> remains unchanged.
+      </p>
+    </div>
+
+    <h2>3. Hash-Gated Model Triage (Zero-Token Invariant)</h2>
+    <p>
+      Every retrieved snapshot is hashed at two layers:
+    </p>
+    <ol>
+      <li><strong>Raw Payload Hash (SHA-256)</strong>: Exact byte-for-byte stream digest.</li>
+      <li><strong>Canonical DOM Hash</strong>: Stripped of cosmetic comments, whitespace, nonces, and session tokens.</li>
+    </ol>
+    <p>
+      If the DOM hash matches the previous successful snapshot, the run is classified as <code>quiet</code> immediately. <strong>Zero LLM calls are made</strong>, eliminating token costs and preventing API latency.
+    </p>
+
+    <h2>4. The 5 Multi-Layer Sanity Verification Gates (G1–G5)</h2>
+    <p>
+      When an extraction fails, Agentd formulates candidate repair locators. To prevent hallucinations from ever reaching a human operator, every candidate is subjected to five automated verification gates:
+    </p>
+    <ul>
+      <li><strong>Gate 1 (Structural Syntax)</strong>: Rejects invalid CSS syntax, blank extractions, oversized payloads (&gt;64 KB), and pseudoprotocol injection attacks (e.g. <code>javascript:</code>, <code>data:</code>).</li>
+      <li><strong>Gate 2 (Shape & Type Consistency)</strong>: Verifies that the candidate extraction matches the defined Intent type (e.g. parses as a currency float rather than free-form prose).</li>
+      <li><strong>Gate 3 (Historical Stability)</strong>: Re-evaluates candidate against historical known-good snapshots to verify consistency across previous DOM redesigns.</li>
+      <li><strong>Gate 4 (Independent Semantic Verification)</strong>: The candidate repair generator <em>cannot verify itself</em>. An independent model prompt with isolated context evaluates semantic fidelity.</li>
+      <li><strong>Gate 5 (Field Continuity)</strong>: For record and collection intents, ensures multi-field relative structures remain cohesive.</li>
+    </ul>
+
+    <h2>5. Mandatory Human-in-the-Loop Sign-Off</h2>
+    <p>
+      By foundational architectural invariant:
+    </p>
+    <div class="card" style="border-left: 4px solid var(--danger);">
+      <p style="font-size: 1.05rem; font-weight: 700; color: var(--text-main); margin-bottom: 0.5rem;">
+        Invariant: Repair is NEVER automatically applied.
+      </p>
+      <p style="margin-bottom: 0;">
+        Autonomous self-modifying code leads to compounding hallucination loops and silent data corruption. Agentd presents verified candidates, but activating a new binding requires an operator signature via <code>agentd repair approve &lt;id&gt; --by &lt;name&gt;</code>.
+      </p>
+    </div>
+
+    <h2>6. SQLite WAL Concurrency & Storage</h2>
+    <p>
+      Agentd persists all data in embedded SQLite using WAL (Write-Ahead Logging) mode:
+    </p>
+    <ul>
+      <li><strong>Single Dedicated Writer</strong>: Enforces strict serial transactional state updates without lock contention.</li>
+      <li><strong>Multi-Connection Reader Pool</strong>: Readers never block writers, and writers never block readers.</li>
+      <li><strong>Atomic Live Backups</strong>: Uses SQLite <code>VACUUM INTO</code> to generate clean checkpointed single-file backups while the daemon is actively serving traffic.</li>
+      <li><strong>Deduplicated zstd Compression</strong>: Identical snapshot bodies across runs and checks are content-addressed and stored once using high-ratio zstd compression.</li>
+    </ul>
+  </div>
+
+  <footer>
+    <p>Agentd System Specification &bull; Released under the MIT License</p>
+  </footer>
+
+  <script>
+    function toggleTheme() {
+      const current = document.documentElement.getAttribute('data-theme') || 'dark';
+      const next = current === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+    }
+  </script>
+</body>
+</html>

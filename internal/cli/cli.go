@@ -1078,7 +1078,7 @@ func runServe(ctx context.Context, env Env, args []string) error {
 		go func() {
 			errCh <- srv.Start()
 		}()
-		fmt.Fprintf(env.Out, "Agentd HTTP API listening on %s (loopback only: %v)\n", srv.Addr(), !*allowRemote)
+		fmt.Fprintf(env.Out, "Agentd HTTP API listening on %s (loopback only: %v)\nWeb Dashboard available at http://%s/\n", srv.Addr(), !*allowRemote, srv.Addr())
 
 		select {
 		case <-ctx.Done():
