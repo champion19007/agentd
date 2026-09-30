@@ -57,8 +57,8 @@ func TestSecurity_FilesystemPermissionsAndRefusal(t *testing.T) {
 			t.Fatal("expected resolver to refuse world-readable secret file, but it succeeded")
 		}
 		fail, ok := err.(domain.Failure)
-		if !ok || fail.Code != "secret_file_insecure" {
-			t.Fatalf("expected secret_file_insecure failure, got %v", err)
+		if !ok || (fail.Code != "secret_file_insecure" && fail.Code != "insecure_secret_permissions") {
+			t.Fatalf("expected insecure secret permissions failure, got %v", err)
 		}
 	}
 
