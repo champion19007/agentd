@@ -1,0 +1,802 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Agentd — Autonomous Web Observation & Verified Repair Daemon</title>
+  <meta name="description" content="A single static binary background daemon for continuous web observation, deterministic extraction, model-assisted triage, and human-verified repair.">
+  <style>
+    :root {
+      --bg-canvas: #090d16;
+      --bg-surface: #111827;
+      --bg-surface-elevated: #1f2937;
+      --bg-surface-hover: #2d3748;
+      --border: #374151;
+      --border-subtle: #232d3f;
+      --text-main: #f9fafb;
+      --text-muted: #9ca3af;
+      --text-faint: #6b7280;
+      --brand: #3b82f6;
+      --brand-hover: #2563eb;
+      --brand-glow: rgba(59, 130, 246, 0.25);
+      --success: #10b981;
+      --success-glow: rgba(16, 185, 129, 0.15);
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --purple: #8b5cf6;
+      --code-bg: #030712;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+    }
+
+    @media (prefers-color-scheme: light) {
+      :root[data-theme="light"] {
+        --bg-canvas: #f8fafc;
+        --bg-surface: #ffffff;
+        --bg-surface-elevated: #f1f5f9;
+        --bg-surface-hover: #e2e8f0;
+        --border: #e2e8f0;
+        --border-subtle: #f1f5f9;
+        --text-main: #0f172a;
+        --text-muted: #475569;
+        --text-faint: #94a3b8;
+        --brand: #2563eb;
+        --brand-hover: #1d4ed8;
+        --brand-glow: rgba(37, 99, 235, 0.15);
+        --code-bg: #f1f5f9;
+      }
+    }
+
+    :root[data-theme="light"] {
+      --bg-canvas: #f8fafc;
+      --bg-surface: #ffffff;
+      --bg-surface-elevated: #f1f5f9;
+      --bg-surface-hover: #e2e8f0;
+      --border: #e2e8f0;
+      --border-subtle: #f1f5f9;
+      --text-main: #0f172a;
+      --text-muted: #475569;
+      --text-faint: #94a3b8;
+      --brand: #2563eb;
+      --brand-hover: #1d4ed8;
+      --brand-glow: rgba(37, 99, 235, 0.15);
+      --code-bg: #f1f5f9;
+    }
+
+    :root[data-theme="dark"] {
+      --bg-canvas: #090d16;
+      --bg-surface: #111827;
+      --bg-surface-elevated: #1f2937;
+      --bg-surface-hover: #2d3748;
+      --border: #374151;
+      --border-subtle: #232d3f;
+      --text-main: #f9fafb;
+      --text-muted: #9ca3af;
+      --text-faint: #6b7280;
+      --brand: #3b82f6;
+      --brand-hover: #2563eb;
+      --brand-glow: rgba(59, 130, 246, 0.25);
+      --code-bg: #030712;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: var(--font-sans);
+      background-color: var(--bg-canvas);
+      color: var(--text-main);
+      line-height: 1.6;
+    }
+
+    /* Navbar */
+    nav.top-nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(12px);
+      padding: 0.9rem 2rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .nav-brand {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      text-decoration: none;
+      color: inherit;
+    }
+
+    .brand-badge {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: 800;
+      font-size: 1.15rem;
+    }
+
+    .brand-name {
+      font-size: 1.25rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+
+    .brand-name span { color: var(--brand); }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+    }
+
+    .nav-links a {
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+      transition: color 0.15s ease;
+    }
+
+    .nav-links a:hover { color: var(--text-main); }
+    .nav-links a.active { color: var(--brand); }
+
+    .btn {
+      font-family: inherit;
+      font-size: 0.88rem;
+      font-weight: 600;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg-surface-elevated);
+      color: var(--text-main);
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      transition: all 0.15s ease;
+    }
+
+    .btn:hover {
+      background: var(--bg-surface-hover);
+      border-color: var(--text-muted);
+    }
+
+    .btn-primary {
+      background: var(--brand);
+      border-color: var(--brand);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: var(--brand-hover);
+    }
+
+    /* Hero */
+    header.hero {
+      padding: 5rem 2rem 4rem 2rem;
+      text-align: center;
+      max-width: 980px;
+      margin: 0 auto;
+    }
+
+    .badge-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.35rem 0.9rem;
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border);
+      border-radius: 9999px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 1.5rem;
+    }
+
+    .badge-pill .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+    }
+
+    h1.hero-title {
+      font-size: 3.25rem;
+      font-weight: 900;
+      letter-spacing: -0.04em;
+      line-height: 1.15;
+      margin-bottom: 1.5rem;
+    }
+
+    h1.hero-title span {
+      background: linear-gradient(135deg, #60a5fa 0%, #a78bfa 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    p.hero-sub {
+      font-size: 1.25rem;
+      color: var(--text-muted);
+      max-width: 760px;
+      margin: 0 auto 2.5rem auto;
+      line-height: 1.6;
+    }
+
+    .hero-actions {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    /* Terminal snippet */
+    .terminal-box {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      font-family: var(--font-mono);
+      font-size: 0.9rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1.5rem;
+      max-width: 620px;
+      margin: 2.5rem auto 0 auto;
+      box-shadow: 0 10px 25px -5px rgba(0,0,0,0.3);
+    }
+
+    .terminal-box code { color: #38bdf8; }
+
+    /* Feature Grid */
+    section.features {
+      padding: 4rem 2rem;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .section-header {
+      text-align: center;
+      margin-bottom: 3.5rem;
+    }
+
+    .section-header h2 {
+      font-size: 2.25rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      margin-bottom: 0.75rem;
+    }
+
+    .section-header p {
+      color: var(--text-muted);
+      font-size: 1.1rem;
+    }
+
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 1.75rem;
+    }
+
+    .feature-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 2rem;
+      transition: transform 0.2s ease, border-color 0.2s ease;
+    }
+
+    .feature-card:hover {
+      transform: translateY(-3px);
+      border-color: var(--brand);
+    }
+
+    .feature-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      background: var(--brand-glow);
+      color: var(--brand);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 1.25rem;
+    }
+
+    .feature-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+    }
+
+    .feature-desc {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      line-height: 1.6;
+    }
+
+    /* Interactive Simulator */
+    section.simulator {
+      background: var(--bg-surface);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      padding: 5rem 2rem;
+    }
+
+    .simulator-container {
+      max-width: 1100px;
+      margin: 0 auto;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4);
+      background: var(--bg-canvas);
+    }
+
+    .sim-header {
+      background: var(--bg-surface-elevated);
+      border-bottom: 1px solid var(--border);
+      padding: 0.75rem 1.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .sim-dots {
+      display: flex;
+      gap: 6px;
+    }
+
+    .sim-dot {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: #4b5563;
+    }
+
+    .sim-dot.red { background: #ef4444; }
+    .sim-dot.yellow { background: #f59e0b; }
+    .sim-dot.green { background: #10b981; }
+
+    .sim-tabs {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .sim-tab {
+      padding: 0.35rem 0.85rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      border-radius: 6px;
+      color: var(--text-muted);
+      cursor: pointer;
+      border: 1px solid transparent;
+    }
+
+    .sim-tab.active {
+      background: var(--bg-surface);
+      color: var(--brand);
+      border-color: var(--border);
+    }
+
+    .sim-body {
+      padding: 2rem;
+      min-height: 380px;
+    }
+
+    /* Verification Gate showcase */
+    .gate-display {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 1rem;
+      margin-top: 1.5rem;
+    }
+
+    .gate-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      text-align: center;
+    }
+
+    .gate-card.passed {
+      border-color: rgba(16, 185, 129, 0.4);
+      background: rgba(16, 185, 129, 0.05);
+    }
+
+    .gate-name {
+      font-size: 0.75rem;
+      font-weight: 700;
+      font-family: var(--font-mono);
+      color: var(--success);
+      margin-bottom: 0.25rem;
+    }
+
+    .gate-label {
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+
+    /* Architecture diagram */
+    .diagram-container {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.5rem;
+      font-family: var(--font-mono);
+      font-size: 0.82rem;
+      color: #93c5fd;
+      overflow-x: auto;
+      white-space: pre;
+      line-height: 1.4;
+    }
+
+    footer {
+      border-top: 1px solid var(--border);
+      background: var(--bg-surface);
+      padding: 3rem 2rem;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 0.88rem;
+    }
+
+    footer a {
+      color: var(--brand);
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+  <nav class="top-nav">
+    <a href="#" class="nav-brand">
+      <div class="brand-badge">A</div>
+      <div class="brand-name">Agent<span>d</span></div>
+    </a>
+    <div class="nav-links">
+      <a href="architecture.html">Architecture</a>
+      <a href="api.html">REST API</a>
+      <a href="mcp.html">MCP Guide</a>
+      <a href="https://github.com/champion19007/agentd/releases/tag/v1.0.0" target="_blank" rel="noopener">Release v1.0.0</a>
+      <a href="https://github.com/champion19007/agentd" target="_blank" rel="noopener" class="btn">
+        <svg width="16" height="16" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
+        <span>GitHub</span>
+      </a>
+      <button class="btn" onclick="toggleTheme()" title="Toggle Theme">🌓</button>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <div class="badge-pill">
+      <span class="dot"></span>
+      <span>v1.0.0 General Availability Released</span>
+    </div>
+    <h1 class="hero-title">
+      Autonomous Web Observation<br>
+      with <span>Verified Human Repair</span>
+    </h1>
+    <p class="hero-sub">
+      A single static Go daemon designed for deterministic HTML extraction, hash-gated AI triage, and multi-gate candidate repair. Pure Go, zero cgo, no external database.
+    </p>
+    <div class="hero-actions">
+      <a href="#quickstart" class="btn btn-primary" style="padding: 0.65rem 1.4rem; font-size: 0.95rem;">Get Started in 60s</a>
+      <a href="#simulator" class="btn" style="padding: 0.65rem 1.4rem; font-size: 0.95rem;">Interactive Simulator</a>
+    </div>
+
+    <div class="terminal-box">
+      <span>$ <code>curl -sSL https://raw.githubusercontent.com/champion19007/agentd/main/install.sh | sh</code></span>
+      <button class="btn" onclick="navigator.clipboard.writeText('curl -sSL https://raw.githubusercontent.com/champion19007/agentd/main/install.sh | sh'); alert('Copied to clipboard!');">Copy</button>
+    </div>
+  </header>
+
+  <!-- Core Features -->
+  <section class="features">
+    <div class="section-header">
+      <h2>Engineered for Absolute Reliability</h2>
+      <p>Why production systems choose Agentd over fragile scrapers and blind LLM agents.</p>
+    </div>
+
+    <div class="feature-grid">
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+        </div>
+        <div class="feature-title">Pure Static Binary</div>
+        <div class="feature-desc">
+          Single standalone executable. Zero runtime dependencies, no cgo, no node, and no external database servers. Runs natively on Linux, macOS, and Windows.
+        </div>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        </div>
+        <div class="feature-title">100% Hash-Gated Triage</div>
+        <div class="feature-desc">
+          Canonical DOM and payload hashing bypasses 100% of LLM model calls when content is unchanged. Reduces AI API costs and token consumption to near zero.
+        </div>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </div>
+        <div class="feature-title">5 Verification Gates (G1–G5)</div>
+        <div class="feature-desc">
+          Candidate repairs must pass structural syntax, shape consistency, historical stability, independent semantic verification, and field continuity before human review.
+        </div>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        </div>
+        <div class="feature-title">Mandatory Human Approval</div>
+        <div class="feature-desc">
+          Foundational invariant: <em>Model proposes, human decides</em>. Repairs are never automatically activated. An explicit <code>--by</code> signature is enforced.
+        </div>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+        </div>
+        <div class="feature-title">SQLite WAL Concurrency</div>
+        <div class="feature-desc">
+          Single-writer connection, multi-reader pool, content-addressed zstd snapshot compression, and atomic non-blocking <code>VACUUM INTO</code> live backups.
+        </div>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        </div>
+        <div class="feature-title">Local Web UI & MCP Server</div>
+        <div class="feature-desc">
+          Built-in browser dashboard served on loopback, plus 7 read-only inspection tools exposed over Model Context Protocol (MCP) for Claude Desktop, Cursor, and AI agents.
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Interactive Simulator -->
+  <section class="simulator" id="simulator">
+    <div class="section-header">
+      <h2>Interactive Live Simulator</h2>
+      <p>Experience how Agentd detects redesign breakages, verifies candidates, and prompts operators.</p>
+    </div>
+
+    <div class="simulator-container">
+      <div class="sim-header">
+        <div class="sim-dots">
+          <div class="sim-dot red"></div>
+          <div class="sim-dot yellow"></div>
+          <div class="sim-dot green"></div>
+        </div>
+        <div class="sim-tabs">
+          <div class="sim-tab active" onclick="setSimTab('check', this)">1. Observation Check</div>
+          <div class="sim-tab" onclick="setSimTab('breakage', this)">2. DOM Breakage</div>
+          <div class="sim-tab" onclick="setSimTab('repair', this)">3. 5-Gate Verification</div>
+          <div class="sim-tab" onclick="setSimTab('approval', this)">4. Human Decision</div>
+        </div>
+        <div style="font-size: 0.76rem; font-family: var(--font-mono); color: var(--text-muted);">
+          Agentd Simulation Engine
+        </div>
+      </div>
+
+      <div class="sim-body" id="simContent">
+        <!-- Rendered dynamically -->
+      </div>
+    </div>
+  </section>
+
+  <!-- Hexagonal Architecture -->
+  <section class="features">
+    <div class="section-header">
+      <h2>Hexagonal Architecture</h2>
+      <p>Clean ports & adapters isolation. The core has zero I/O, no concrete imports, and injected time.</p>
+    </div>
+
+    <div class="diagram-container">
+                    +-------------------------------------------------------------+
+                    |                      DRIVING ADAPTERS                       |
+                    |   [ CLI Commands ]    [ Local REST API ]    [ MCP Server ]   |
+                    +------------------------------+------------------------------+
+                                                   |
+                                                   v
+                    +-------------------------------------------------------------+
+                    |                 PORTS (Inbound & Outbound)                  |
+                    +------------------------------+------------------------------+
+                                                   |
+                                                   v
++---------------------------------------------------------------------------------------------------+
+|                                      DETERMINISTIC CORE                                           |
+|                                                                                                   |
+|   +-----------------------+   +-----------------------+   +-----------------------------------+   |
+|   |   Domain Invariants   |   |   Slot Computation    |   |         5-Gate Verification       |   |
+|   |  - Check Invariant    |   |  - DST boundaries     |   |   G1 Structural Syntax            |   |
+|   |  - Snapshot Hash      |   |  - Jitter dispersion  |   |   G2 Shape & Type Match           |   |
+|   |  - Intent Separation  |   |  - Overload detection |   |   G3 Temporal Stability           |   |
+|   |  - Incident Lifecycle |   |  - Catch-up policies  |   |   G4 Independent Model Check      |   |
+|   +-----------------------+   +-----------------------+   |   G5 Field Continuity             |   |
+|                                                           +-----------------------------------+   |
++---------------------------------------------------------------------------------------------------+
+                                                   |
+                                                   v
+                    +-------------------------------------------------------------+
+                    |                      DRIVEN ADAPTERS                        |
+                    |   [ HTTP / Plugins ]   [ Model Client ]   [ SQLite WAL DB ] |
+                    +-------------------------------------------------------------+
+    </div>
+  </section>
+
+  <!-- Quickstart -->
+  <section class="features" id="quickstart" style="padding-top: 0;">
+    <div class="section-header">
+      <h2>Quickstart in 60 Seconds</h2>
+      <p>Get up and running locally with three simple commands.</p>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem;">
+      <div class="feature-card">
+        <div style="font-family: var(--font-mono); font-size: 0.85rem; color: var(--brand); font-weight: 700; margin-bottom: 0.5rem;">STEP 1</div>
+        <div class="feature-title">Initialize Database</div>
+        <div class="feature-desc" style="margin-bottom: 1rem;">Creates SQLite schema with single-writer WAL mode and secure 0600 file permissions.</div>
+        <pre class="terminal-box" style="margin: 0;"><code>agentd init</code></pre>
+      </div>
+
+      <div class="feature-card">
+        <div style="font-family: var(--font-mono); font-size: 0.85rem; color: var(--brand); font-weight: 700; margin-bottom: 0.5rem;">STEP 2</div>
+        <div class="feature-title">Add Target Check</div>
+        <div class="feature-desc" style="margin-bottom: 1rem;">Declare target URL, semantic extraction intent, and DOM locator binding.</div>
+        <pre class="terminal-box" style="margin: 0; font-size: 0.78rem;"><code>agentd check add price-chk \
+  --url https://shop.com/item \
+  --kind scalar --selector ".price" \
+  --interval 1h</code></pre>
+      </div>
+
+      <div class="feature-card">
+        <div style="font-family: var(--font-mono); font-size: 0.85rem; color: var(--brand); font-weight: 700; margin-bottom: 0.5rem;">STEP 3</div>
+        <div class="feature-title">Start Server & Dashboard</div>
+        <div class="feature-desc" style="margin-bottom: 1rem;">Launches the background scheduler, REST API, and embedded Web Dashboard.</div>
+        <pre class="terminal-box" style="margin: 0;"><code>agentd serve</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>Agentd is released under the MIT License. Single static binary compiled with pure Go.</p>
+    <p style="margin-top: 0.5rem;">
+      <a href="https://github.com/champion19007/agentd">GitHub Repository</a> &bull;
+      <a href="architecture.html">Architecture Specification</a> &bull;
+      <a href="api.html">REST API Reference</a> &bull;
+      <a href="mcp.html">MCP Setup Guide</a>
+    </p>
+  </footer>
+
+  <script>
+    function initTheme() {
+      const saved = localStorage.getItem('agentd-site-theme') || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+      document.documentElement.setAttribute('data-theme', saved);
+    }
+    initTheme();
+
+    function toggleTheme() {
+      const current = document.documentElement.getAttribute('data-theme') || 'dark';
+      const next = current === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('agentd-site-theme', next);
+    }
+
+    const simSteps = {
+      check: `
+        <div style="max-width: 680px; margin: 0 auto;">
+          <h3 style="margin-bottom: 0.5rem; font-size: 1.15rem;">Observation Check: <code>flight-price-sfo</code></h3>
+          <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.25rem;">
+            Agentd continuously observes target webpages at scheduled intervals with configured jitter to avoid predictable traffic spikes.
+          </p>
+          <div class="diagram-container" style="color: #6ee7b7; margin-bottom: 1.25rem;">
+Check ID:    flight-price-sfo
+Target URL:  https://airlines.test/flights/sfo-jfk
+Intent:      ScalarIntent (Field: "fare", Type: Currency)
+Binding:     CSS: ".fare-box span.amount"
+Interval:    30m (Jitter: &plusmn;2m, Catch-up: once)
+State:       ● Healthy (Last captured: 12 minutes ago)
+          </div>
+          <button class="btn btn-primary" onclick="setSimTab('breakage', document.querySelectorAll('.sim-tab')[1])">Simulate Upstream Redesign →</button>
+        </div>
+      `,
+      breakage: `
+        <div style="max-width: 680px; margin: 0 auto;">
+          <h3 style="margin-bottom: 0.5rem; font-size: 1.15rem; color: var(--danger);">Breakage Detected: <code>ClassStructural</code></h3>
+          <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.25rem;">
+            Upstream website updated its DOM layout from a table to Tailwind cards. The old selector <code>.fare-box span.amount</code> matched 0 DOM nodes.
+          </p>
+          <div class="diagram-container" style="color: #fca5a5; margin-bottom: 1.25rem;">
+HTTP Status:  200 OK (Content retrieved: 142 KB)
+Old Locator:  .fare-box span.amount  --> [0 NODES MATCHED]
+Incident ID:  inc-9482-structural
+Triage:       ClassStructural (DOM redesign, not network outage)
+Action:       Halt execution, preserve snapshot, generate repair candidates.
+          </div>
+          <button class="btn btn-primary" onclick="setSimTab('repair', document.querySelectorAll('.sim-tab')[2])">Run 5-Gate Verification →</button>
+        </div>
+      `,
+      repair: `
+        <div style="max-width: 780px; margin: 0 auto;">
+          <h3 style="margin-bottom: 0.5rem; font-size: 1.15rem; color: var(--brand);">Multi-Layer Sanity Verification (Gates G1–G5)</h3>
+          <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1rem;">
+            Candidate repair locator <code>div[data-testid="flight-card"] .price-val</code> was generated. It must pass all 5 gates before being presented to a human:
+          </p>
+          <div class="gate-display">
+            <div class="gate-card passed">
+              <div class="gate-name">✔ G1</div>
+              <div class="gate-label">Structural Syntax</div>
+            </div>
+            <div class="gate-card passed">
+              <div class="gate-name">✔ G2</div>
+              <div class="gate-label">Shape & Type</div>
+            </div>
+            <div class="gate-card passed">
+              <div class="gate-name">✔ G3</div>
+              <div class="gate-label">Stability</div>
+            </div>
+            <div class="gate-card passed">
+              <div class="gate-name">✔ G4</div>
+              <div class="gate-label">Independent Verify</div>
+            </div>
+            <div class="gate-card passed">
+              <div class="gate-name">✔ G5</div>
+              <div class="gate-label">Continuity</div>
+            </div>
+          </div>
+          <div style="text-align: center; margin-top: 1.75rem;">
+            <button class="btn btn-primary" onclick="setSimTab('approval', document.querySelectorAll('.sim-tab')[3])">Present to Human Operator →</button>
+          </div>
+        </div>
+      `,
+      approval: `
+        <div style="max-width: 680px; margin: 0 auto;">
+          <h3 style="margin-bottom: 0.5rem; font-size: 1.15rem; color: var(--success);">Human Decision Required</h3>
+          <p style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.25rem;">
+            By architectural invariant, <strong>repair is NEVER automatically applied</strong>. The candidate is staged awaiting human signature:
+          </p>
+          <div class="diagram-container" style="color: #93c5fd; margin-bottom: 1.25rem;">
+$ agentd incident show inc-9482-structural
+Incident:   inc-9482-structural (Open)
+Check:      flight-price-sfo
+Broken:     .fare-box span.amount
+Candidate:  div[data-testid="flight-card"] .price-val
+Gates:      G1:PASS  G2:PASS  G3:PASS  G4:PASS  G5:PASS
+
+# Human operator signs and activates repair:
+$ agentd repair approve inc-9482-structural --by "alice"
+✔ Repair approved and active. New binding version: v2.
+          </div>
+          <div style="text-align: center;">
+            <button class="btn btn-primary" onclick="setSimTab('check', document.querySelectorAll('.sim-tab')[0])">↺ Restart Walkthrough</button>
+          </div>
+        </div>
+      `
+    };
+
+    function setSimTab(step, el) {
+      document.querySelectorAll('.sim-tab').forEach(t => t.classList.remove('active'));
+      if (el) el.classList.add('active');
+      document.getElementById('simContent').innerHTML = simSteps[step];
+    }
+
+    setSimTab('check', document.querySelector('.sim-tab'));
+  </script>
+</body>
+</html>

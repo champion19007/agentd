@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Model Context Protocol (MCP) Guide — Agentd</title>
+  <style>
+    :root {
+      --bg-canvas: #090d16;
+      --bg-surface: #111827;
+      --bg-surface-elevated: #1f2937;
+      --border: #374151;
+      --text-main: #f9fafb;
+      --text-muted: #9ca3af;
+      --brand: #3b82f6;
+      --brand-hover: #2563eb;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --code-bg: #030712;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    @media (prefers-color-scheme: light) {
+      :root[data-theme="light"] {
+        --bg-canvas: #f8fafc;
+        --bg-surface: #ffffff;
+        --bg-surface-elevated: #f1f5f9;
+        --border: #e2e8f0;
+        --text-main: #0f172a;
+        --text-muted: #475569;
+        --brand: #2563eb;
+        --code-bg: #f1f5f9;
+      }
+    }
+    :root[data-theme="light"] {
+      --bg-canvas: #f8fafc;
+      --bg-surface: #ffffff;
+      --bg-surface-elevated: #f1f5f9;
+      --border: #e2e8f0;
+      --text-main: #0f172a;
+      --text-muted: #475569;
+      --brand: #2563eb;
+      --code-bg: #f1f5f9;
+    }
+    :root[data-theme="dark"] {
+      --bg-canvas: #090d16;
+      --bg-surface: #111827;
+      --bg-surface-elevated: #1f2937;
+      --border: #374151;
+      --text-main: #f9fafb;
+      --text-muted: #9ca3af;
+      --brand: #3b82f6;
+      --code-bg: #030712;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font-sans); background: var(--bg-canvas); color: var(--text-main); line-height: 1.6; }
+    nav.top-nav { position: sticky; top: 0; z-index: 100; background: var(--bg-surface); border-bottom: 1px solid var(--border); padding: 0.9rem 2rem; display: flex; align-items: center; justify-content: space-between; }
+    .nav-brand { display: flex; align-items: center; gap: 0.75rem; text-decoration: none; color: inherit; }
+    .brand-badge { width: 34px; height: 34px; border-radius: 8px; background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); display: flex; align-items: center; justify-content: center; color: white; font-weight: 800; }
+    .brand-name { font-size: 1.25rem; font-weight: 800; }
+    .brand-name span { color: var(--brand); }
+    .nav-links { display: flex; align-items: center; gap: 1.5rem; }
+    .nav-links a { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; font-weight: 600; }
+    .nav-links a.active { color: var(--brand); }
+    .container { max-width: 900px; margin: 3rem auto; padding: 0 1.5rem; }
+    h1 { font-size: 2.75rem; font-weight: 900; letter-spacing: -0.03em; margin-bottom: 1rem; line-height: 1.2; }
+    h2 { font-size: 1.75rem; font-weight: 800; letter-spacing: -0.02em; margin-top: 2.5rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
+    p { margin-bottom: 1.25rem; color: var(--text-muted); }
+    pre, code { font-family: var(--font-mono); font-size: 0.85rem; }
+    .code-box { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; overflow-x: auto; margin-bottom: 1.5rem; color: #93c5fd; line-height: 1.45; }
+    .card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; }
+    .btn { font-family: inherit; font-size: 0.85rem; font-weight: 600; padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-surface-elevated); color: var(--text-main); cursor: pointer; }
+    footer { border-top: 1px solid var(--border); background: var(--bg-surface); padding: 3rem 2rem; text-align: center; color: var(--text-muted); font-size: 0.88rem; margin-top: 5rem; }
+    footer a { color: var(--brand); text-decoration: none; }
+  </style>
+</head>
+<body>
+  <nav class="top-nav">
+    <a href="index.html" class="nav-brand">
+      <div class="brand-badge">A</div>
+      <div class="brand-name">Agent<span>d</span></div>
+    </a>
+    <div class="nav-links">
+      <a href="architecture.html">Architecture</a>
+      <a href="api.html">REST API</a>
+      <a href="mcp.html" class="active">MCP Guide</a>
+      <a href="https://github.com/champion19007/agentd" target="_blank" rel="noopener">GitHub</a>
+      <button class="btn" onclick="toggleTheme()">🌓</button>
+    </div>
+  </nav>
+
+  <div class="container">
+    <h1>Model Context Protocol (MCP) Guide</h1>
+    <p style="font-size: 1.15rem;">
+      Agentd implements the Model Context Protocol (MCP), enabling autonomous AI agents (Claude Desktop, Cursor, Antigravity) to query web observations, inspect breakages, and analyze extraction health.
+    </p>
+
+    <div class="card" style="border-left: 4px solid var(--warning);">
+      <h3 style="margin-bottom: 0.5rem; color: var(--warning);">Security Invariant: Read-Only Tool Isolation</h3>
+      <p style="margin-bottom: 0;">
+        MCP tools exposed by Agentd are <strong>strictly read-only</strong>. Any attempt by an external AI agent to invoke write operations (e.g. <code>approve_repair</code>, <code>add_check</code>, <code>delete_check</code>) over MCP is rejected with a security boundary violation error. Human operator approval cannot be delegated to an AI agent.
+      </p>
+    </div>
+
+    <h2>1. Configuring Claude Desktop</h2>
+    <p>
+      Add Agentd to your <code>claude_desktop_config.json</code>:
+    </p>
+    <div class="code-box">
+{
+  "mcpServers": {
+    "agentd": {
+      "command": "/usr/local/bin/agentd",
+      "args": ["mcp", "--db", "/var/lib/agentd/agentd.db"]
+    }
+  }
+}
+    </div>
+
+    <h2>2. Running Over Stdio</h2>
+    <p>
+      For interactive CLI scripting or language model integration pipelines, run:
+    </p>
+    <div class="code-box">
+# Start MCP server listening on standard input/output:
+agentd mcp
+    </div>
+
+    <h2>3. Running Over HTTP POST</h2>
+    <p>
+      When Agentd is running as a daemon via <code>agentd serve</code>, MCP JSON-RPC messages can be sent to <code>POST /v1/mcp</code>:
+    </p>
+    <div class="code-box">
+curl -X POST http://127.0.0.1:8080/v1/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "inspect_status",
+      "arguments": {}
+    }
+  }'
+    </div>
+
+    <h2>4. The 7 Inspection Tools</h2>
+
+    <div class="card">
+      <h3>1. <code>inspect_status</code></h3>
+      <p>Returns daemon health, freshness SLIs, and active worker counts.</p>
+    </div>
+
+    <div class="card">
+      <h3>2. <code>list_checks</code></h3>
+      <p>Enumerates all configured checks, intent types, and intervals.</p>
+    </div>
+
+    <div class="card">
+      <h3>3. <code>inspect_check</code></h3>
+      <p>Detailed specification of a single check: active binding, intent, and source configuration.</p>
+    </div>
+
+    <div class="card">
+      <h3>4. <code>list_runs</code></h3>
+      <p>Recent execution history including terminal states and duration.</p>
+    </div>
+
+    <div class="card">
+      <h3>5. <code>inspect_run</code></h3>
+      <p>Deep inspection of a single run: extracted payload, diff against previous, and model triage reason.</p>
+    </div>
+
+    <div class="card">
+      <h3>6. <code>list_incidents</code></h3>
+      <p>All open and historical incidents requiring human operator intervention.</p>
+    </div>
+
+    <div class="card">
+      <h3>7. <code>inspect_incident</code></h3>
+      <p>Root cause analysis, broken DOM locator, candidate repair locator, and 5-gate sanity scores.</p>
+    </div>
+  </div>
+
+  <footer>
+    <p>Agentd MCP Guide &bull; Released under the MIT License</p>
+  </footer>
+
+  <script>
+    function toggleTheme() {
+      const current = document.documentElement.getAttribute('data-theme') || 'dark';
+      const next = current === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+    }
+  </script>
+</body>
+</html>

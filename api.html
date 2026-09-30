@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>REST API Reference — Agentd v1.0.0</title>
+  <style>
+    :root {
+      --bg-canvas: #090d16;
+      --bg-surface: #111827;
+      --bg-surface-elevated: #1f2937;
+      --border: #374151;
+      --text-main: #f9fafb;
+      --text-muted: #9ca3af;
+      --brand: #3b82f6;
+      --brand-hover: #2563eb;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --code-bg: #030712;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    @media (prefers-color-scheme: light) {
+      :root[data-theme="light"] {
+        --bg-canvas: #f8fafc;
+        --bg-surface: #ffffff;
+        --bg-surface-elevated: #f1f5f9;
+        --border: #e2e8f0;
+        --text-main: #0f172a;
+        --text-muted: #475569;
+        --brand: #2563eb;
+        --code-bg: #f1f5f9;
+      }
+    }
+    :root[data-theme="light"] {
+      --bg-canvas: #f8fafc;
+      --bg-surface: #ffffff;
+      --bg-surface-elevated: #f1f5f9;
+      --border: #e2e8f0;
+      --text-main: #0f172a;
+      --text-muted: #475569;
+      --brand: #2563eb;
+      --code-bg: #f1f5f9;
+    }
+    :root[data-theme="dark"] {
+      --bg-canvas: #090d16;
+      --bg-surface: #111827;
+      --bg-surface-elevated: #1f2937;
+      --border: #374151;
+      --text-main: #f9fafb;
+      --text-muted: #9ca3af;
+      --brand: #3b82f6;
+      --code-bg: #030712;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font-sans); background: var(--bg-canvas); color: var(--text-main); line-height: 1.6; }
+    nav.top-nav { position: sticky; top: 0; z-index: 100; background: var(--bg-surface); border-bottom: 1px solid var(--border); padding: 0.9rem 2rem; display: flex; align-items: center; justify-content: space-between; }
+    .nav-brand { display: flex; align-items: center; gap: 0.75rem; text-decoration: none; color: inherit; }
+    .brand-badge { width: 34px; height: 34px; border-radius: 8px; background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%); display: flex; align-items: center; justify-content: center; color: white; font-weight: 800; }
+    .brand-name { font-size: 1.25rem; font-weight: 800; }
+    .brand-name span { color: var(--brand); }
+    .nav-links { display: flex; align-items: center; gap: 1.5rem; }
+    .nav-links a { color: var(--text-muted); text-decoration: none; font-size: 0.9rem; font-weight: 600; }
+    .nav-links a.active { color: var(--brand); }
+    .container { max-width: 900px; margin: 3rem auto; padding: 0 1.5rem; }
+    h1 { font-size: 2.75rem; font-weight: 900; letter-spacing: -0.03em; margin-bottom: 1rem; line-height: 1.2; }
+    h2 { font-size: 1.75rem; font-weight: 800; letter-spacing: -0.02em; margin-top: 2.5rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
+    p { margin-bottom: 1.25rem; color: var(--text-muted); }
+    pre, code { font-family: var(--font-mono); font-size: 0.85rem; }
+    .code-box { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; overflow-x: auto; margin-bottom: 1.5rem; color: #93c5fd; line-height: 1.45; }
+    .endpoint-card { background: var(--bg-surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; }
+    .method-badge { display: inline-block; font-size: 0.75rem; font-weight: 700; padding: 2px 8px; border-radius: 4px; font-family: var(--font-mono); margin-right: 0.5rem; }
+    .method-get { background: rgba(59,130,246,0.2); color: #60a5fa; }
+    .method-post { background: rgba(16,185,129,0.2); color: #34d399; }
+    .method-delete { background: rgba(239,68,68,0.2); color: #f87171; }
+    .endpoint-title { font-size: 1.15rem; font-weight: 700; display: flex; align-items: center; margin-bottom: 0.75rem; }
+    .btn { font-family: inherit; font-size: 0.85rem; font-weight: 600; padding: 0.4rem 0.8rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-surface-elevated); color: var(--text-main); cursor: pointer; }
+    footer { border-top: 1px solid var(--border); background: var(--bg-surface); padding: 3rem 2rem; text-align: center; color: var(--text-muted); font-size: 0.88rem; margin-top: 5rem; }
+    footer a { color: var(--brand); text-decoration: none; }
+  </style>
+</head>
+<body>
+  <nav class="top-nav">
+    <a href="index.html" class="nav-brand">
+      <div class="brand-badge">A</div>
+      <div class="brand-name">Agent<span>d</span></div>
+    </a>
+    <div class="nav-links">
+      <a href="architecture.html">Architecture</a>
+      <a href="api.html" class="active">REST API</a>
+      <a href="mcp.html">MCP Guide</a>
+      <a href="https://github.com/champion19007/agentd" target="_blank" rel="noopener">GitHub</a>
+      <button class="btn" onclick="toggleTheme()">🌓</button>
+    </div>
+  </nav>
+
+  <div class="container">
+    <h1>REST API Specification</h1>
+    <p style="font-size: 1.15rem;">
+      Agentd serves an authenticated, loopback-bound REST API under <code>/v1/...</code>. By default, it listens at <code>http://127.0.0.1:8080</code>.
+    </p>
+
+    <div class="endpoint-card" style="border-left: 4px solid var(--brand);">
+      <h3 style="margin-bottom: 0.5rem;">Security & Cross-Origin Invariants</h3>
+      <p style="margin-bottom: 0;">
+        To protect against DNS rebinding and drive-by web attacks:
+        <br>&bull; Requests with <code>Sec-Fetch-Site: cross-site</code> are rejected with <code>403 Forbidden</code>.
+        <br>&bull; External non-loopback <code>Origin</code> headers and opaque <code>null</code> origins are blocked.
+        <br>&bull; Mutation endpoints enforce a <code>4 MiB</code> request body cap via <code>http.MaxBytesReader</code>.
+      </p>
+    </div>
+
+    <h2>System & Health Endpoints</h2>
+
+    <div class="endpoint-card">
+      <div class="endpoint-title">
+        <span class="method-badge method-get">GET</span>
+        <code>/v1/status</code>
+      </div>
+      <p>Retrieves the overall daemon health, observation freshness SLI, and queue metrics.</p>
+      <div class="code-box">
+// Response (200 OK)
+{
+  "healthy": true,
+  "checks_total": 42,
+  "checks_active": 40,
+  "fresh_count": 39,
+  "overdue_count": 1,
+  "max_staleness_seconds": 128.5,
+  "active_runs": 2,
+  "queue_depth": 0,
+  "open_incidents": 1
+}
+      </div>
+    </div>
+
+    <h2>Observation Check Endpoints</h2>
+
+    <div class="endpoint-card">
+      <div class="endpoint-title">
+        <span class="method-badge method-get">GET</span>
+        <code>/v1/checks</code>
+      </div>
+      <p>Lists all configured checks with their active definitions and schedules.</p>
+    </div>
+
+    <div class="endpoint-card">
+      <div class="endpoint-title">
+        <span class="method-badge method-post">POST</span>
+        <code>/v1/checks</code>
+      </div>
+      <p>Creates or updates an observation check with defined semantic intent and locator binding.</p>
+      <div class="code-box">
+// Request Body
+{
+  "id": "price-tracker",
+  "name": "Production Price Check",
+  "source": { "kind": "http", "url": "https://example.com/item" },
+  "intent": {
+    "kind": "scalar",
+    "scalar": { "name": "price", "type": "currency" }
+  },
+  "binding": { "kind": "css", "locator": ".price-box span.val" },
+  "schedule": { "interval": "1h", "jitter": "5m", "catch_up": "once" },
+  "enabled": true
+}
+      </div>
+    </div>
+
+    <div class="endpoint-card">
+      <div class="endpoint-title">
+        <span class="method-badge method-post">POST</span>
+        <code>/v1/checks/{id}/run</code>
+      </div>
+      <p>Triggers an immediate out-of-schedule run for the specified check.</p>
+    </div>
+
+    <h2>Execution Run Endpoints</h2>
+
+    <div class="endpoint-card">
+      <div class="endpoint-title">
+        <span class="method-badge method-get">GET</span>
+        <code>/v1/runs</code>
+      </div>
+      <p>Returns historical execution runs with durations, terminal states, and triage verdicts.</p>
+    </div>
+
+    <h2>Breakage Incident & Repair Endpoints</h2>
+
+    <div class="endpoint-card">
+      <div class="endpoint-title">
+        <span class="method-badge method-get">GET</span>
+        <code>/v1/incidents</code>
+      </div>
+      <p>Lists open and resolved incidents, root cause classifications, and candidate repairs.</p>
+    </div>
+
+    <div class="endpoint-card">
+      <div class="endpoint-title">
+        <span class="method-badge method-post">POST</span>
+        <code>/v1/incidents/{id}/approve</code>
+      </div>
+      <p>Approves and activates a verified repair candidate. Requires operator attribution signature.</p>
+      <div class="code-box">
+// Request Body (Mandatory "by" field)
+{
+  "by": "alice",
+  "reason": "Verified layout shift on redesigned product page"
+}
+      </div>
+    </div>
+
+    <h2>Maintenance Endpoints</h2>
+
+    <div class="endpoint-card">
+      <div class="endpoint-title">
+        <span class="method-badge method-post">POST</span>
+        <code>/v1/gc</code>
+      </div>
+      <p>Executes an atomic retention sweep, removing expired snapshots and non-terminal runs while retaining known-good snapshots.</p>
+    </div>
+
+    <div class="endpoint-card">
+      <div class="endpoint-title">
+        <span class="method-badge method-post">POST</span>
+        <code>/v1/backup</code>
+      </div>
+      <p>Creates a consistent, checkpointed SQLite snapshot file with 0600 file permissions.</p>
+    </div>
+
+    <div class="endpoint-card">
+      <div class="endpoint-title">
+        <span class="method-badge method-get">GET</span>
+        <code>/metrics</code>
+      </div>
+      <p>Exposes Prometheus format metrics including run counts, durations, and freshness SLIs.</p>
+    </div>
+  </div>
+
+  <footer>
+    <p>Agentd REST API Reference &bull; Released under the MIT License</p>
+  </footer>
+
+  <script>
+    function toggleTheme() {
+      const current = document.documentElement.getAttribute('data-theme') || 'dark';
+      const next = current === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+    }
+  </script>
+</body>
+</html>
