@@ -1,6 +1,10 @@
 package domain
 
-import "time"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"time"
+)
 
 // RawResponse is what a Source returned, before anyone has tried to find
 // meaning in it.
@@ -227,6 +231,9 @@ type Notification struct {
 
 	// OccurredAt is when the thing being reported happened.
 	OccurredAt time.Time
+
+	// TraceID correlates this notification to the run that produced it.
+	TraceID string
 }
 
 // Validate reports whether n is well formed.
@@ -241,6 +248,28 @@ func (n Notification) Validate() error {
 		return invalidf("notification for check %q asks for a decision but names no incident", n.CheckID)
 	}
 	return nil
+}
+
+// ContentHash returns a deterministic SHA-256 digest of the notification's
+// semantic content, used for idempotent deduplication.
+func (n Notification) ContentHash() string {
+	h := sha256.New()
+	h.Write([]byte(n.CheckID))
+	h.Write([]byte{0})
+	h.Write([]byte(n.Severity))
+	h.Write([]byte{0})
+	h.Write([]byte(n.Subject))
+	h.Write([]byte{0})
+	h.Write([]byte(n.Body))
+	h.Write([]byte{0})
+	h.Write([]byte(n.IncidentID))
+	h.Write([]byte{0})
+	if n.NeedsDecision {
+		h.Write([]byte{1})
+	} else {
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // Secret is a resolved credential. Its String and GoString are redacted so

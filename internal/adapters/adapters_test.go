@@ -142,7 +142,7 @@ func TestHTTPFetchSendsSecretsAsHeaders(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	src := httpsource.New(httpsource.Options{})
+	src := httpsource.New(httpsource.Options{AllowPrivateIPs: true})
 	raw, err := src.Fetch(context.Background(), domain.SourceSpec{
 		Kind:          domain.SourceHTTP,
 		URL:           srv.URL,
@@ -188,7 +188,7 @@ func TestHTTPStatusClassification(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			_, err := httpsource.New(httpsource.Options{}).Fetch(context.Background(),
+			_, err := httpsource.New(httpsource.Options{AllowPrivateIPs: true}).Fetch(context.Background(),
 				domain.SourceSpec{Kind: domain.SourceHTTP, URL: srv.URL}, nil)
 			if err == nil {
 				t.Fatal("a failing status produced no error")
@@ -204,6 +204,61 @@ func TestHTTPStatusClassification(t *testing.T) {
 				t.Error("the source adapter reported a structural failure")
 			}
 		})
+	}
+}
+
+func TestSSRFBlocksPrivateAndLoopbackByDefault(t *testing.T) {
+	src := httpsource.New(httpsource.Options{}) // safe default: AllowPrivateIPs is false
+
+	forbiddenURLs := []string{
+		"http://127.0.0.1:8080/metrics",
+		"http://localhost:3000",
+		"http://10.0.0.1/admin",
+		"http://172.16.0.1/internal",
+		"http://192.168.1.1/router",
+		"http://169.254.169.254/latest/meta-data",
+		"http://[::1]:8080",
+		"http://[fe80::1]:8080",
+		"http://0.0.0.0:80",
+	}
+
+	for _, target := range forbiddenURLs {
+		t.Run(target, func(t *testing.T) {
+			_, err := src.Fetch(context.Background(), domain.SourceSpec{Kind: domain.SourceHTTP, URL: target}, nil)
+			if err == nil {
+				t.Fatalf("expected SSRF block for %s, but request was permitted", target)
+			}
+			f := domain.Classify(err)
+			if f.Class != domain.ClassFatal {
+				t.Errorf("Class = %q, want fatal for SSRF block", f.Class)
+			}
+			if f.Code != "ssrf_blocked" {
+				t.Errorf("Code = %q, want ssrf_blocked", f.Code)
+			}
+		})
+	}
+}
+
+func TestSSRFBlockedOnRedirect(t *testing.T) {
+	internalSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("sensitive internal data"))
+	}))
+	defer internalSrv.Close()
+
+	redirectSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, internalSrv.URL, http.StatusFound)
+	}))
+	defer redirectSrv.Close()
+
+	// Source with default safe options (AllowPrivateIPs: false)
+	src := httpsource.New(httpsource.Options{AllowPrivateIPs: false})
+	_, err := src.Fetch(context.Background(), domain.SourceSpec{Kind: domain.SourceHTTP, URL: redirectSrv.URL}, nil)
+	if err == nil {
+		t.Fatal("redirect to loopback should have been blocked by SSRF filter")
+	}
+	f := domain.Classify(err)
+	if f.Class != domain.ClassFatal || f.Code != "ssrf_blocked" {
+		t.Errorf("expected fatal ssrf_blocked error, got %+v", f)
 	}
 }
 
@@ -228,7 +283,7 @@ func TestHTTPCapsResponseSize(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := httpsource.New(httpsource.Options{MaxBytes: 128}).Fetch(context.Background(),
+	_, err := httpsource.New(httpsource.Options{MaxBytes: 128, AllowPrivateIPs: true}).Fetch(context.Background(),
 		domain.SourceSpec{Kind: domain.SourceHTTP, URL: srv.URL}, nil)
 	if err == nil {
 		t.Fatal("an oversized response was accepted")
@@ -644,3 +699,29 @@ func TestNotifierRefusesAnIncompleteNotification(t *testing.T) {
 		t.Errorf("err = %v, want an invalid-value error", err)
 	}
 }
+
+func TestHTTPSource_ConnectTimeoutSeparation(t *testing.T) {
+	src := httpsource.New(httpsource.Options{
+		ConnectTimeout:  50 * time.Millisecond,
+		Timeout:         10 * time.Second,
+		AllowPrivateIPs: true,
+	})
+	if src == nil {
+		t.Fatal("failed to construct HTTP source with ConnectTimeout")
+	}
+
+	start := time.Now()
+	_, err := src.Fetch(context.Background(), domain.SourceSpec{
+		Kind: domain.SourceHTTP,
+		URL:  "http://192.0.2.1:81/blackhole",
+	}, domain.SecretBundle{})
+
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected connection timeout error, got nil")
+	}
+	if elapsed > 3*time.Second {
+		t.Errorf("connect timeout did not abort early: took %v (expected well under 10s)", elapsed)
+	}
+}
+

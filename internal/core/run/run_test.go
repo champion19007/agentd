@@ -3,6 +3,7 @@ package run_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -477,3 +478,479 @@ func mustInvariants(t *testing.T, err error) {
 		t.Fatalf("invariant violated: %v", err)
 	}
 }
+
+type stubModel struct {
+	calls int
+	resp  ports.ModelResponse
+	err   error
+}
+
+func (m *stubModel) Complete(ctx context.Context, req ports.ModelRequest) (ports.ModelResponse, error) {
+	m.calls++
+	return m.resp, m.err
+}
+
+type stubNotifier struct {
+	delivered []domain.Notification
+}
+
+func (n *stubNotifier) Kinds() []domain.DestinationKind {
+	return []domain.DestinationKind{domain.DestinationNotify}
+}
+
+func (n *stubNotifier) Deliver(ctx context.Context, notif domain.Notification) error {
+	n.delivered = append(n.delivered, notif)
+	return nil
+}
+
+func TestHashGateSuppressesModelWhenUnchanged(t *testing.T) {
+	st := newStore(binding())
+	// Existing result from previous run is 49
+	st.last, st.hasLast = record("49", "5", false), true
+
+	model := &stubModel{resp: ports.ModelResponse{Text: "model explanation"}}
+	notifier := &stubNotifier{}
+
+	o := run.New(run.Deps{
+		Clock:       &stubClock{now: base},
+		IDs:         &stubIDs{},
+		Store:       st,
+		Source:      okSource(),
+		Extract:     stubExtractor{out: record("49", "5", false)}, // identical extraction
+		Fingerprint: stubFingerprint{fp: "fp-v1"},
+		Secrets:     stubSecrets{},
+		Model:       model,
+		Notifier:    notifier,
+	})
+
+	out, err := o.Run(context.Background(), check(t), 1)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if out.Run.State() != domain.StateQuiet {
+		t.Errorf("State = %q, want quiet", out.Run.State())
+	}
+	// THE HASH GATE INVARIANT: Model must NOT be called when payload matches!
+	if model.calls != 0 {
+		t.Errorf("model was called %d times; the hash gate must eliminate model calls on quiet runs", model.calls)
+	}
+	if len(notifier.delivered) != 0 {
+		t.Errorf("quiet run sent %d notifications, want 0", len(notifier.delivered))
+	}
+}
+
+func TestHashGateInvokesModelWhenPayloadChanged(t *testing.T) {
+	st := newStore(binding())
+	// Previous result was 39; new result is 49
+	st.last, st.hasLast = record("39", "5", false), true
+
+	model := &stubModel{resp: ports.ModelResponse{Text: `{"verdict": "changed", "explanation": "the price increased from 39 to 49"}`}}
+	notifier := &stubNotifier{}
+
+	c := check(t)
+	// Enable notification
+	cDef := c.ActiveDefinition()
+	cDef.Destination = domain.Destination{Kind: domain.DestinationNotify, Target: "ops@example.test"}
+	_, _ = c.Revise(cDef)
+
+	o := run.New(run.Deps{
+		Clock:       &stubClock{now: base},
+		IDs:         &stubIDs{},
+		Store:       st,
+		Source:      okSource(),
+		Extract:     stubExtractor{out: record("49", "5", false)},
+		Fingerprint: stubFingerprint{fp: "fp-v1"},
+		Secrets:     stubSecrets{},
+		Model:       model,
+		Notifier:    notifier,
+	})
+
+	out, err := o.Run(context.Background(), c, 1)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if out.Run.State() != domain.StateChanged {
+		t.Errorf("State = %q, want changed", out.Run.State())
+	}
+	// Model must be called when payload changes!
+	if model.calls != 1 {
+		t.Errorf("model calls = %d, want 1 when payload changed", model.calls)
+	}
+	if out.Run.Explanation() != "the price increased from 39 to 49" {
+		t.Errorf("Explanation = %q, want model response text", out.Run.Explanation())
+	}
+	if len(notifier.delivered) != 1 {
+		t.Errorf("delivered notifications = %d, want 1", len(notifier.delivered))
+	}
+}
+
+type sequenceSource struct {
+	responses []domain.RawResponse
+	errors    []error
+	call      int
+}
+
+func (s *sequenceSource) Fetch(context.Context, domain.SourceSpec, domain.SecretBundle) (domain.RawResponse, error) {
+	idx := s.call
+	s.call++
+	if idx < len(s.errors) && s.errors[idx] != nil {
+		return domain.RawResponse{}, s.errors[idx]
+	}
+	if idx < len(s.responses) {
+		return s.responses[idx], nil
+	}
+	return okSource().raw, nil
+}
+
+func TestOrchestratorRetriesTransientFailureAndSucceeds(t *testing.T) {
+	st := newStore(binding())
+	st.last, st.hasLast = record("49", "5", false), true
+
+	// First attempt fails transiently; second attempt succeeds
+	seq := &sequenceSource{
+		errors: []error{errors.New("connection reset by peer"), nil},
+		responses: []domain.RawResponse{
+			{},
+			okSource().raw,
+		},
+	}
+
+	clk := &stubClock{now: base}
+	o := run.New(run.Deps{
+		Clock:       clk,
+		IDs:         &stubIDs{},
+		Store:       st,
+		Source:      seq,
+		Extract:     stubExtractor{out: record("49", "5", false)},
+		Fingerprint: stubFingerprint{fp: "fp-v1"},
+		Secrets:     stubSecrets{},
+	})
+
+	out, err := o.Run(context.Background(), check(t), 1)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if seq.call != 2 {
+		t.Errorf("source called %d times, want 2 (1 retry)", seq.call)
+	}
+	if out.Run.State() != domain.StateQuiet {
+		t.Errorf("State = %q after successful retry, want quiet", out.Run.State())
+	}
+}
+
+func TestOrchestratorExhaustsRetriesAndPersistsFailure(t *testing.T) {
+	st := newStore(binding())
+	// Policy allows 2 retries (DefaultMaxRetries = 3)
+	seq := &sequenceSource{
+		errors: []error{
+			errors.New("timeout 1"),
+			errors.New("timeout 2"),
+			errors.New("timeout 3"),
+			errors.New("timeout 4"),
+		},
+	}
+
+	c := check(t)
+	cDef := c.ActiveDefinition()
+	cDef.Policy.MaxRetries = 3
+	cDef.Destination = domain.Destination{Kind: domain.DestinationNotify, Target: "ops@example.test"}
+	_, _ = c.Revise(cDef)
+
+	notifier := &stubNotifier{}
+	clk := &stubClock{now: base}
+
+	o := run.New(run.Deps{
+		Clock:       clk,
+		IDs:         &stubIDs{},
+		Store:       st,
+		Source:      seq,
+		Extract:     stubExtractor{},
+		Fingerprint: stubFingerprint{fp: "fp-v1"},
+		Secrets:     stubSecrets{},
+		Notifier:    notifier,
+	})
+
+	out, err := o.Run(context.Background(), c, 1)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// Initial attempt + 2 retries = 3 attempts total
+	if seq.call != 3 {
+		t.Errorf("source calls = %d, want 3 attempts", seq.call)
+	}
+	if out.Run.State() != domain.StateFailed {
+		t.Errorf("State = %q, want failed after retry exhaustion", out.Run.State())
+	}
+	// After exhausting retries, operator should be alerted
+	if len(notifier.delivered) != 1 {
+		t.Errorf("delivered notifications = %d, want 1", len(notifier.delivered))
+	}
+}
+
+type stubMetrics struct {
+	ports.NoopMetrics
+	queueDepths []int
+}
+
+func (m *stubMetrics) SetQueueDepth(depth int) {
+	m.queueDepths = append(m.queueDepths, depth)
+}
+
+func TestRunOrchestrator_SkipOverloadedAndDescribeFallback(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(binding())
+	c := check(t)
+	clk := &stubClock{now: base}
+
+	o := run.New(run.Deps{
+		Clock:       clk,
+		IDs:         &stubIDs{},
+		Store:       st,
+		Source:      okSource(),
+		Extract:     stubExtractor{out: record("49", "5", false)},
+		Fingerprint: stubFingerprint{fp: "fp-v1"},
+		Secrets:     stubSecrets{},
+	})
+
+	// 1. SkipOverloaded
+	r, err := o.SkipOverloaded(ctx, c, 42, "runner queue saturated")
+	if err != nil {
+		t.Fatalf("SkipOverloaded failed: %v", err)
+	}
+	if r.State() != domain.StateSkippedOverload {
+		t.Errorf("expected StateSkippedOverload, got: %s", r.State())
+	}
+	if r.Slot() != 42 {
+		t.Errorf("expected slot 42, got %d", r.Slot())
+	}
+
+	// Verify run was persisted
+	savedRun := st.runs[r.Key()]
+	if savedRun == nil {
+		t.Fatalf("expected saved overloaded run in store: %+v", r.Key())
+	}
+
+	// 2. Rule-based change explanation when Model is nil
+	st2 := newStore(binding())
+	st2.last, st2.hasLast = record("39", "5", false), true
+
+	o2 := run.New(run.Deps{
+		Clock:       clk,
+		IDs:         &stubIDs{},
+		Store:       st2,
+		Source:      okSource(),
+		Extract:     stubExtractor{out: record("49", "5", false)},
+		Fingerprint: stubFingerprint{fp: "fp-v1"},
+		Secrets:     stubSecrets{},
+		Model:       nil, // rule-based fallback!
+	})
+
+	out, err := o2.Run(ctx, c, 10)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if out.Run.State() != domain.StateChanged {
+		t.Errorf("expected StateChanged, got %s", out.Run.State())
+	}
+	if !strings.Contains(out.Run.Explanation(), "is different from the last time Agentd looked") {
+		t.Errorf("expected fallback explanation, got: %s", out.Run.Explanation())
+	}
+}
+
+func TestWorkerPool_WithMetricsCoverage(t *testing.T) {
+	sm := &stubMetrics{}
+	runner := run.JobRunnerFunc(func(ctx context.Context, c *domain.Check, slot domain.Slot) error {
+		return nil
+	})
+	overload := &stubOverloader{}
+	clk := &stubClock{now: base}
+
+	pool := run.NewWorkerPool(1, 5, clk, runner, overload).WithMetrics(sm)
+	defer pool.Shutdown(context.Background())
+
+	c := check(t)
+	_, _ = pool.Submit(context.Background(), run.Job{Check: c, Slot: 1})
+
+	time.Sleep(10 * time.Millisecond)
+	if len(sm.queueDepths) == 0 {
+		t.Error("expected metrics queue depths recorded")
+	}
+}
+
+func TestRunOrchestrator_EvaluationUncertainAndInitialModel(t *testing.T) {
+	ctx := context.Background()
+	clk := &stubClock{now: base}
+
+	// 1. Model returns VerdictUncertain -> Run degrades with ClassSemantic
+	t.Run("VerdictUncertain degrades run", func(t *testing.T) {
+		st := newStore(binding())
+		st.last, st.hasLast = record("39", "5", false), true
+		c := check(t)
+
+		uncertainModel := &stubModel{
+			resp: ports.ModelResponse{
+				Text: `{"verdict": "uncertain", "explanation": "page layout ambiguous"}`,
+			},
+		}
+
+		o := run.New(run.Deps{
+			Clock:       clk,
+			IDs:         &stubIDs{},
+			Store:       st,
+			Source:      okSource(),
+			Extract:     stubExtractor{out: record("49", "5", false)},
+			Fingerprint: stubFingerprint{fp: "fp-v1"},
+			Secrets:     stubSecrets{},
+			Model:       uncertainModel,
+		})
+
+		out, err := o.Run(ctx, c, 1)
+		if err != nil {
+			t.Fatalf("Run failed: %v", err)
+		}
+		if out.Run.State() != domain.StateDegraded {
+			t.Errorf("expected StateDegraded for uncertain verdict, got: %s", out.Run.State())
+		}
+		if out.Run.Failure() == nil || out.Run.Failure().Code != "uncertain_evaluation" {
+			t.Errorf("expected failure code uncertain_evaluation, got: %+v", out.Run.Failure())
+		}
+	})
+
+	// 2. First observation with model configured
+	t.Run("first observation model explanation", func(t *testing.T) {
+		st := newStore(binding()) // hasLast = false
+		c := check(t)
+
+		initModel := &stubModel{
+			resp: ports.ModelResponse{Text: "initial price observed at 49"},
+		}
+
+		o := run.New(run.Deps{
+			Clock:       clk,
+			IDs:         &stubIDs{},
+			Store:       st,
+			Source:      okSource(),
+			Extract:     stubExtractor{out: record("49", "5", false)},
+			Fingerprint: stubFingerprint{fp: "fp-v1"},
+			Secrets:     stubSecrets{},
+			Model:       initModel,
+		})
+
+		out, err := o.Run(ctx, c, 1)
+		if err != nil {
+			t.Fatalf("Run failed: %v", err)
+		}
+		if out.Run.State() != domain.StateChanged {
+			t.Errorf("expected StateChanged on first observation, got: %s", out.Run.State())
+		}
+		if out.Run.Explanation() != "initial price observed at 49" {
+			t.Errorf("expected model explanation on first run, got: %s", out.Run.Explanation())
+		}
+	})
+
+	// 3. Secrets required but Deps.Secrets == nil
+	t.Run("secrets required but resolver missing", func(t *testing.T) {
+		st := newStore(binding())
+		defWithSecret := check(t).ActiveDefinition()
+		defWithSecret.Source = domain.SourceSpec{
+			Kind:          domain.SourceHTTP,
+			URL:           "https://example.test",
+			SecretHeaders: map[string]domain.SecretRef{"Authorization": "api-key"},
+		}
+		cWithSecret, _ := domain.NewCheck("chk-sec", defWithSecret)
+
+		o := run.New(run.Deps{
+			Clock:       clk,
+			IDs:         &stubIDs{},
+			Store:       st,
+			Source:      okSource(),
+			Extract:     stubExtractor{out: record("49", "5", false)},
+			Fingerprint: stubFingerprint{fp: "fp-v1"},
+			Secrets:     nil, // Nil secrets resolver!
+		})
+
+		out, err := o.Run(ctx, cWithSecret, 1)
+		if err != nil {
+			t.Fatalf("Run failed: %v", err)
+		}
+		if out.Run.State() != domain.StateFailed {
+			t.Errorf("expected StateFailed, got: %s", out.Run.State())
+		}
+		if out.Run.Failure() == nil || out.Run.Failure().Code != "secret_resolver_missing" {
+			t.Errorf("expected failure code secret_resolver_missing, got: %+v", out.Run.Failure())
+		}
+	})
+}
+
+func TestOrchestratorDegradationModes(t *testing.T) {
+	ctx := context.Background()
+	clk := &stubClock{now: base}
+	b := binding()
+	st := newStore(b)
+	st.last, st.hasLast = record("49", "5", false), true
+
+	sm := &stubModel{}
+	o := run.New(run.Deps{
+		Clock:       clk,
+		IDs:         &stubIDs{},
+		Store:       st,
+		Source:      okSource(),
+		Extract:     stubExtractor{out: record("59", "5", false)}, // Changed value!
+		Fingerprint: stubFingerprint{fp: "fp-v1"},
+		Secrets:     stubSecrets{},
+		Model:       sm,
+	})
+
+	// Default: Normal mode
+	if o.Degradation() != domain.DegradationNormal {
+		t.Fatalf("expected initial degradation normal, got: %s", o.Degradation())
+	}
+
+	// 1. ShedModel mode: model evaluation should be bypassed
+	o.SetDegradation(domain.DegradationShedModel)
+	if o.Degradation() != domain.DegradationShedModel {
+		t.Fatalf("expected degradation shed_model, got: %s", o.Degradation())
+	}
+
+	out, err := o.Run(ctx, check(t), 1)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if out.Run.State() != domain.StateChanged {
+		t.Errorf("expected StateChanged, got: %s", out.Run.State())
+	}
+	if sm.calls != 0 {
+		t.Errorf("expected 0 model calls under ShedModel, got: %d", sm.calls)
+	}
+	if !strings.Contains(out.Run.Explanation(), "load shedding") {
+		t.Errorf("expected load shedding explanation, got: %s", out.Run.Explanation())
+	}
+
+	// 2. Reduced retention mode on failed run
+	o.SetDegradation(domain.DegradationReducedRetention)
+	oFail := run.New(run.Deps{
+		Clock:       clk,
+		IDs:         &stubIDs{},
+		Store:       st,
+		Source:      okSource(),
+		Extract:     stubExtractor{err: errors.New("broken selector")},
+		Fingerprint: stubFingerprint{fp: "fp-v1"},
+		Secrets:     stubSecrets{},
+	})
+	oFail.SetDegradation(domain.DegradationReducedRetention)
+
+	outFail, err := oFail.Run(ctx, check(t), 2)
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if outFail.Run.State() != domain.StateFailed {
+		t.Errorf("expected StateFailed, got: %s", outFail.Run.State())
+	}
+}
+
+
+

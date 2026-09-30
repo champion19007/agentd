@@ -223,6 +223,9 @@ func (x q) AuditTrail(ctx context.Context, limit int) ([]domain.AuditEvent, erro
 	if limit <= 0 {
 		limit = 100
 	}
+	if limit > 10000 {
+		limit = 10000
+	}
 	rows, err := x.db.QueryContext(ctx, `
 		SELECT id, at, actor, action, subject_kind, subject_id, detail
 		  FROM audit_events WHERE tenant_id = ? ORDER BY at DESC, id DESC LIMIT ?`,

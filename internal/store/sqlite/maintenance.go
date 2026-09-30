@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -63,6 +64,11 @@ func (s *Store) GC(ctx context.Context, policy domain.Retention, now time.Time) 
 		return sweep, err
 	}
 	sweep.Incidents = incidents
+
+	// Passive WAL checkpoint: folds completed log frames back to the main database file
+	// without blocking active readers or forcing locks.
+	var busy, logFrames, checkpointed int
+	_ = s.writer.QueryRowContext(ctx, `PRAGMA wal_checkpoint(PASSIVE)`).Scan(&busy, &logFrames, &checkpointed)
 
 	return sweep, nil
 }
@@ -248,18 +254,29 @@ func (s *Store) Checkpoint(ctx context.Context) error {
 // A backup nobody has opened is a hope, not a backup. This is cheap enough to
 // run every time one is taken.
 func VerifyBackup(ctx context.Context, path string) (int, error) {
-	store, err := Open(ctx, Options{Path: path})
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return 0, fmt.Errorf("sqlite: resolving backup path %q: %w", path, err)
+	}
+
+	dsn := fmt.Sprintf("file:%s?mode=ro&_pragma=query_only(1)&_pragma=busy_timeout(5000)", filepath.ToSlash(abs))
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return 0, fmt.Errorf("sqlite: backup at %q could not be opened: %w", path, err)
 	}
-	defer store.Close()
+	defer db.Close()
 
 	var result string
-	if err := store.reader.QueryRowContext(ctx, `PRAGMA integrity_check`).Scan(&result); err != nil {
+	if err := db.QueryRowContext(ctx, `PRAGMA integrity_check`).Scan(&result); err != nil {
 		return 0, fmt.Errorf("sqlite: checking backup at %q: %w", path, err)
 	}
 	if result != "ok" {
 		return 0, fmt.Errorf("sqlite: backup at %q failed its integrity check: %s", path, result)
 	}
-	return store.SchemaVersion(ctx)
+
+	var version sql.NullInt64
+	if err := db.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version); err != nil {
+		return 0, fmt.Errorf("sqlite: reading backup schema version at %q: %w", path, err)
+	}
+	return int(version.Int64), nil
 }

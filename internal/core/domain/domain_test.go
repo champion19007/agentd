@@ -252,3 +252,157 @@ func TestSlotsPartitionTime(t *testing.T) {
 		t.Errorf("SlotStart(%d) = %v, which is after the instant it contains", first, got)
 	}
 }
+
+func TestScheduleCatchUpPolicyDefaultAndValidation(t *testing.T) {
+	sDefault := domain.Schedule{Interval: time.Hour}
+	if sDefault.CatchUpPolicy() != domain.CatchUpOnce {
+		t.Errorf("default CatchUpPolicy = %v, want once", sDefault.CatchUpPolicy())
+	}
+	if err := sDefault.Validate(); err != nil {
+		t.Errorf("validating default schedule: %v", err)
+	}
+
+	for _, p := range []domain.CatchUpPolicy{domain.CatchUpSkip, domain.CatchUpOnce, domain.CatchUpBackfill} {
+		s := domain.Schedule{Interval: time.Hour, CatchUp: p}
+		if s.CatchUpPolicy() != p {
+			t.Errorf("CatchUpPolicy = %v, want %v", s.CatchUpPolicy(), p)
+		}
+		if err := s.Validate(); err != nil {
+			t.Errorf("validating schedule with %s: %v", p, err)
+		}
+	}
+
+	sBad := domain.Schedule{Interval: time.Hour, CatchUp: "invalid"}
+	if err := sBad.Validate(); err == nil {
+		t.Error("expected error validating unknown catch-up policy")
+	}
+}
+
+func TestSlotsAcrossDSTTransitions(t *testing.T) {
+	loc, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Skip("skipping DST test; America/New_York location not available")
+	}
+
+	// 2026-03-08: US Spring Forward (02:00 -> 03:00 local)
+	// 01:00 EST = 06:00 UTC
+	// 01:30 EST = 06:30 UTC
+	// 03:00 EDT = 07:00 UTC (1 hour later in real/UTC time, despite 2 hours on wall clock)
+	// 04:00 EDT = 08:00 UTC
+	s := domain.Schedule{Interval: time.Hour}
+
+	t0 := time.Date(2026, 3, 8, 1, 0, 0, 0, loc).UTC()
+	t1 := time.Date(2026, 3, 8, 3, 0, 0, 0, loc).UTC()
+	t2 := time.Date(2026, 3, 8, 4, 0, 0, 0, loc).UTC()
+
+	slot0 := s.SlotAt(t0)
+	slot1 := s.SlotAt(t1)
+	slot2 := s.SlotAt(t2)
+
+	if slot1 != slot0+1 {
+		t.Errorf("spring forward: slot1 (%d) != slot0+1 (%d)", slot1, slot0+1)
+	}
+	if slot2 != slot1+1 {
+		t.Errorf("spring forward: slot2 (%d) != slot1+1 (%d)", slot2, slot1+1)
+	}
+
+	// 2026-11-01: US Fall Back (02:00 -> 01:00 local)
+	// 01:00 EDT = 05:00 UTC
+	// 01:00 EST (repeated hour) = 06:00 UTC
+	// 02:00 EST = 07:00 UTC
+	fall0 := time.Date(2026, 11, 1, 5, 0, 0, 0, time.UTC)
+	fall1 := time.Date(2026, 11, 1, 6, 0, 0, 0, time.UTC)
+	fall2 := time.Date(2026, 11, 1, 7, 0, 0, 0, time.UTC)
+
+	fSlot0 := s.SlotAt(fall0)
+	fSlot1 := s.SlotAt(fall1)
+	fSlot2 := s.SlotAt(fall2)
+
+	if fSlot1 != fSlot0+1 || fSlot2 != fSlot1+1 {
+		t.Errorf("fall back: slots should advance monotonically: %d, %d, %d", fSlot0, fSlot1, fSlot2)
+	}
+}
+
+func TestCheckStalenessCalculation(t *testing.T) {
+	c := newCheck(t) // 1-hour interval, created at base
+	// Without any run, at base + 30m: not stale (threshold is 1.5 * 1h = 90m)
+	stale0 := domain.CheckStaleness(c, nil, base.Add(30*time.Minute), 1.5)
+	if stale0.IsStale {
+		t.Errorf("check with 30m elapsed should not be stale: %+v", stale0)
+	}
+	if stale0.Elapsed != 30*time.Minute {
+		t.Errorf("Elapsed = %v, want 30m", stale0.Elapsed)
+	}
+
+	// At base + 91m: is stale (threshold 90m)
+	stale1 := domain.CheckStaleness(c, nil, base.Add(91*time.Minute), 1.5)
+	if !stale1.IsStale {
+		t.Errorf("check with 91m elapsed should be stale (threshold 90m): %+v", stale1)
+	}
+
+	// With a finished terminal run at base + 60m:
+	r, err := domain.NewRun("run-1", c.ID(), 1, 1, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Start(base.Add(10*time.Minute), 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Quiet(base.Add(60*time.Minute), "snap-1", domain.Extraction{Kind: domain.IntentScalar}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Now at base + 100m (40m after run ended): not stale
+	stale2 := domain.CheckStaleness(c, r, base.Add(100*time.Minute), 1.5)
+	if stale2.IsStale {
+		t.Errorf("check with 40m since last run should not be stale: %+v", stale2)
+	}
+	if stale2.Elapsed != 40*time.Minute {
+		t.Errorf("Elapsed = %v, want 40m", stale2.Elapsed)
+	}
+
+	// At base + 160m (100m after run ended): stale (> 90m)
+	stale3 := domain.CheckStaleness(c, r, base.Add(160*time.Minute), 1.5)
+	if !stale3.IsStale {
+		t.Errorf("check with 100m since last run should be stale: %+v", stale3)
+	}
+}
+
+func TestDegradationLevelMethods(t *testing.T) {
+	cases := []struct {
+		lvl             domain.DegradationLevel
+		name            string
+		shedsHealing    bool
+		shedsModel      bool
+		reducesRetention bool
+		shedsRuns       bool
+	}{
+		{domain.DegradationNormal, "normal", false, false, false, false},
+		{domain.DegradationShedHealing, "shed_healing", true, false, false, false},
+		{domain.DegradationShedModel, "shed_model", true, true, false, false},
+		{domain.DegradationReducedRetention, "reduced_retention", true, true, true, false},
+		{domain.DegradationShedRuns, "shed_runs", true, true, true, true},
+		{domain.DegradationLevel(99), "unknown", true, true, true, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.lvl.String() != tc.name {
+				t.Errorf("String() = %q, want %q", tc.lvl.String(), tc.name)
+			}
+			if tc.lvl.ShedsHealing() != tc.shedsHealing {
+				t.Errorf("ShedsHealing() = %v, want %v", tc.lvl.ShedsHealing(), tc.shedsHealing)
+			}
+			if tc.lvl.ShedsModel() != tc.shedsModel {
+				t.Errorf("ShedsModel() = %v, want %v", tc.lvl.ShedsModel(), tc.shedsModel)
+			}
+			if tc.lvl.ReducesRetention() != tc.reducesRetention {
+				t.Errorf("ReducesRetention() = %v, want %v", tc.lvl.ReducesRetention(), tc.reducesRetention)
+			}
+			if tc.lvl.ShedsRuns() != tc.shedsRuns {
+				t.Errorf("ShedsRuns() = %v, want %v", tc.lvl.ShedsRuns(), tc.shedsRuns)
+			}
+		})
+	}
+}
+

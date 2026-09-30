@@ -4,3 +4,6 @@
 *.db
 *.db-wal
 *.db-shm
+*.out
+*.cov
+coverage.txt

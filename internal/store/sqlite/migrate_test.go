@@ -97,3 +97,34 @@ func TestUpgradeFromInitialSchema(t *testing.T) {
 		t.Errorf("ID = %q, want %q", good.ID(), got)
 	}
 }
+
+func TestMajorMigrationClassificationAndPending(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "pending.db")
+
+	store, err := Open(ctx, Options{Path: path})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer store.Close()
+
+	// Initially, all migrations are applied
+	pending, hasMajor, err := store.PendingMigrations(ctx)
+	if err != nil {
+		t.Fatalf("PendingMigrations: %v", err)
+	}
+	if len(pending) != 0 || hasMajor {
+		t.Errorf("expected 0 pending migrations, got %d (hasMajor=%v)", len(pending), hasMajor)
+	}
+
+	// Verify isMajor classification
+	if !isMajor("0003_major_incident_graph.sql") {
+		t.Error("expected 'major' in name to be classified as major")
+	}
+	if !isMajor("0004_breaking_policy.sql") {
+		t.Error("expected 'breaking' in name to be classified as major")
+	}
+	if isMajor("0001_init.sql") {
+		t.Error("expected 'init' not to be classified as major")
+	}
+}

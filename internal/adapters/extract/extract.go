@@ -430,10 +430,20 @@ func textOf(n *html.Node) string {
 	var b strings.Builder
 	walk(n, func(node *html.Node) {
 		if node.Type == html.TextNode {
+			// Security & cleanliness: never extract script, style, noscript, or template contents as text
+			if node.Parent != nil {
+				tag := strings.ToLower(node.Parent.Data)
+				if tag == "script" || tag == "style" || tag == "noscript" || tag == "template" {
+					return
+				}
+			}
 			b.WriteString(node.Data)
 		}
 	})
-	return strings.Join(strings.Fields(b.String()), " ")
+	// Normalize common unicode whitespace (non-breaking spaces, zero-width spaces)
+	s := strings.ReplaceAll(b.String(), "\u00a0", " ")
+	s = strings.ReplaceAll(s, "\u200b", "")
+	return strings.Join(strings.Fields(s), " ")
 }
 
 func attr(n *html.Node, name string) string {
@@ -584,17 +594,66 @@ func htmlSkeleton(n *html.Node) string {
 		if node.Type != html.ElementNode {
 			return
 		}
-		part := node.Data
+		tag := strings.ToLower(node.Data)
+		// Ignore cosmetic/scripting elements that change without affecting content structure
+		if tag == "script" || tag == "style" || tag == "noscript" || tag == "template" || tag == "svg" {
+			return
+		}
+		part := tag
 		if id := attr(node, "id"); id != "" {
-			part += "#" + id
+			if !isDynamicID(id) {
+				part += "#" + id
+			}
 		}
 		if classes := strings.Fields(attr(node, "class")); len(classes) > 0 {
-			sort.Strings(classes)
-			part += "." + strings.Join(classes, ".")
+			var stable []string
+			for _, c := range classes {
+				if !isDynamicClass(c) {
+					stable = append(stable, c)
+				}
+			}
+			if len(stable) > 0 {
+				sort.Strings(stable)
+				part += "." + strings.Join(stable, ".")
+			}
 		}
 		parts = append(parts, part)
 	})
 	return strings.Join(parts, ">")
+}
+
+// isDynamicID identifies random or generated IDs (e.g. React 18 useId ":r0:", uuid-like, or random hex/numbers).
+func isDynamicID(id string) bool {
+	if strings.HasPrefix(id, ":r") && strings.HasSuffix(id, ":") {
+		return true
+	}
+	if strings.HasPrefix(id, "ember") || strings.HasPrefix(id, "react-") {
+		return true
+	}
+	if len(id) >= 12 {
+		isHex := true
+		for _, r := range id {
+			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F') || r == '-') {
+				isHex = false
+				break
+			}
+		}
+		if isHex {
+			return true
+		}
+	}
+	return false
+}
+
+// isDynamicClass filters out CSS-in-JS hashes like css-1x2y3z or sc-123abc
+func isDynamicClass(c string) bool {
+	if strings.HasPrefix(c, "css-") && len(c) > 6 {
+		return true
+	}
+	if strings.HasPrefix(c, "sc-") && len(c) > 5 {
+		return true
+	}
+	return false
 }
 
 // jsonSkeleton renders the key structure without values. Array elements are

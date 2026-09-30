@@ -179,6 +179,10 @@ func NewRun(id RunID, checkID CheckID, slot Slot, definitionVersion int, at time
 // ID returns the run's identifier.
 func (r *Run) ID() RunID { return r.id }
 
+// TraceID returns the run-level trace identifier for observability correlation.
+// One run corresponds to exactly one trace across logs, notifications, and proposals.
+func (r *Run) TraceID() string { return string(r.id) }
+
 // CheckID returns the check that was run.
 func (r *Run) CheckID() CheckID { return r.checkID }
 

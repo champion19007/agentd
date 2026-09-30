@@ -82,6 +82,20 @@ func (s SourceSpec) SecretRefs() []SecretRef {
 // suppression exact and testable.
 type Slot int64
 
+// CatchUpPolicy controls how missed slots are handled when the scheduler runs.
+type CatchUpPolicy string
+
+const (
+	// CatchUpSkip ignores all missed slots and only schedules the current slot.
+	CatchUpSkip CatchUpPolicy = "skip"
+
+	// CatchUpOnce schedules exactly one run covering the missed period (the default).
+	CatchUpOnce CatchUpPolicy = "once"
+
+	// CatchUpBackfill schedules runs for all missed slots in chronological order.
+	CatchUpBackfill CatchUpPolicy = "backfill"
+)
+
 // Schedule says how often a Check runs.
 type Schedule struct {
 	// Interval is the width of one slot.
@@ -90,6 +104,18 @@ type Schedule struct {
 	// Jitter is the fraction of the interval, in [0, 1], by which a run may
 	// be delayed within its slot so that many checks do not stampede.
 	Jitter float64
+
+	// CatchUp determines how missed slots are handled after daemon downtime.
+	// Empty means CatchUpOnce.
+	CatchUp CatchUpPolicy
+}
+
+// CatchUpPolicy returns the configured policy, defaulting to CatchUpOnce.
+func (s Schedule) CatchUpPolicy() CatchUpPolicy {
+	if s.CatchUp == "" {
+		return CatchUpOnce
+	}
+	return s.CatchUp
 }
 
 // Validate reports whether s is well formed.
@@ -99,6 +125,9 @@ func (s Schedule) Validate() error {
 	}
 	if s.Jitter < 0 || s.Jitter > 1 {
 		return invalidf("schedule jitter must be between 0 and 1, got %v", s.Jitter)
+	}
+	if s.CatchUp != "" && s.CatchUp != CatchUpSkip && s.CatchUp != CatchUpOnce && s.CatchUp != CatchUpBackfill {
+		return invalidf("unknown catch-up policy %q", s.CatchUp)
 	}
 	return nil
 }
@@ -172,6 +201,10 @@ const DefaultMaxRetries = 3
 // Policy is the per-check tuning the core consults when deciding what to do
 // about a failure.
 type Policy struct {
+	// Priority ranks checks for execution under capacity constraints.
+	// Higher numbers have higher priority; lower numbers are shed first.
+	Priority int
+
 	// MaxRepairAttempts bounds how many times Agentd will try to propose a
 	// repair for one incident before giving up and saying so. Zero means
 	// DefaultMaxRepairAttempts.
@@ -419,4 +452,47 @@ func (c *Check) CheckInvariants() error {
 		return invalidf("check %q has %d active definitions, want exactly 1", c.id, active)
 	}
 	return nil
+}
+
+// Staleness reports whether a check is overdue for a terminal run.
+type Staleness struct {
+	CheckID          CheckID
+	ExpectedInterval time.Duration
+	Elapsed          time.Duration
+	Threshold        time.Duration
+	IsStale          bool
+}
+
+// CheckStaleness evaluates whether a check has produced no terminal run
+// materially beyond its expected interval.
+// If lastRun is nil, elapsed time is measured from the check's creation time.
+// graceFactor defaults to 1.5 if <= 0 (e.g. 50% beyond expected interval).
+func CheckStaleness(check *Check, lastRun *Run, now time.Time, graceFactor float64) Staleness {
+	if graceFactor <= 0 {
+		graceFactor = 1.5
+	}
+	interval := check.Schedule().Interval
+	threshold := time.Duration(float64(interval) * graceFactor)
+
+	var lastTime time.Time
+	if lastRun != nil && lastRun.Terminal() && !lastRun.EndedAt().IsZero() {
+		lastTime = lastRun.EndedAt()
+	} else if lastRun != nil && !lastRun.CreatedAt().IsZero() {
+		lastTime = lastRun.CreatedAt()
+	} else {
+		lastTime = check.ActiveDefinition().CreatedAt
+	}
+
+	elapsed := now.Sub(lastTime)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+
+	return Staleness{
+		CheckID:          check.ID(),
+		ExpectedInterval: interval,
+		Elapsed:          elapsed,
+		Threshold:        threshold,
+		IsStale:          elapsed > threshold,
+	}
 }

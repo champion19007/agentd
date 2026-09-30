@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version tag (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build Cross-Platform Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Determine Version
+        id: ver
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build Release Artifacts
+        env:
+          AGENTD_VERSION: ${{ steps.ver.outputs.version }}
+          CGO_ENABLED: 0
+        run: |
+          go run scripts/release/main.go
+
+      - name: Sign Release Checksums
+        env:
+          AGENTD_GPG_KEY: ${{ secrets.AGENTD_GPG_KEY }}
+          COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+        run: |
+          ./scripts/sign.sh dist/SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          name: Agentd ${{ steps.ver.outputs.version }}
+          tag_name: ${{ steps.ver.outputs.version }}
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS*
+            dist/*sbom.json
+            install.sh
+          generate_release_notes: true
+          draft: false
+          prerelease: false

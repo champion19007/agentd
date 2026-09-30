@@ -10,8 +10,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/champion19007/agentd/internal/core/domain"
+	"github.com/champion19007/agentd/internal/core/policy"
 	"github.com/champion19007/agentd/internal/ports"
 )
 
@@ -26,15 +28,39 @@ type Deps struct {
 	Extract     ports.Extractor
 	Fingerprint ports.Fingerprinter
 	Secrets     ports.SecretResolver
+	Model       ports.Model
+	Notifier    ports.Notifier
+	Metrics     ports.Metrics
 }
 
 // Orchestrator runs one check in one slot.
 type Orchestrator struct {
-	deps Deps
+	deps        Deps
+	degradation domain.DegradationLevel
+	mu          sync.RWMutex
 }
 
 // New builds an Orchestrator.
-func New(d Deps) *Orchestrator { return &Orchestrator{deps: d} }
+func New(d Deps) *Orchestrator {
+	if d.Metrics == nil {
+		d.Metrics = ports.NoopMetrics{}
+	}
+	return &Orchestrator{deps: d}
+}
+
+// SetDegradation updates the operational load shedding tier.
+func (o *Orchestrator) SetDegradation(level domain.DegradationLevel) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.degradation = level
+}
+
+// Degradation reports the current operational load shedding tier.
+func (o *Orchestrator) Degradation() domain.DegradationLevel {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	return o.degradation
+}
 
 // Outcome is what a single run amounted to, handed back so that the caller
 // can feed it to the policy layer without re-reading the store.
@@ -72,10 +98,55 @@ func (o *Orchestrator) Run(ctx context.Context, c *domain.Check, slot domain.Slo
 		return Outcome{}, err
 	}
 
-	out := o.execute(ctx, c, r)
+	attempt := 1
+	var out Outcome
+	for {
+		out = o.execute(ctx, c, r)
 
+		// Check if a retryable failure occurred and whether policy asks for a retry
+		if out.Run.State() == domain.StateFailed || out.Run.State() == domain.StateDegraded {
+			sit := policy.Situation{
+				Check:       c,
+				Run:         out.Run,
+				Attempt:     attempt,
+				Degradation: o.Degradation(),
+			}
+			dec := policy.Decide(sit)
+			if dec.Retry && ctx.Err() == nil {
+				if err := o.deps.Clock.Sleep(ctx, dec.RetryAfter); err == nil {
+					attempt++
+					r, _ = domain.NewRun(r.ID(), c.ID(), slot, def.Version, started)
+					continue
+				}
+			}
+		}
+		break
+	}
+
+	// Deliver notification if policy requires it and a notifier is wired
+	if o.deps.Notifier != nil && out.Run.Terminal() {
+		sit := policy.Situation{
+			Check:       c,
+			Run:         out.Run,
+			Attempt:     attempt,
+			Degradation: o.Degradation(),
+		}
+		dec := policy.Decide(sit)
+		if notif, ok := policy.Notification(sit, dec, o.deps.Clock.Now()); ok {
+			_ = o.deps.Notifier.Deliver(ctx, notif)
+		}
+	}
+
+	tPersistStart := o.deps.Clock.Now()
 	if err := o.persist(ctx, out); err != nil {
 		return out, err
+	}
+	o.deps.Metrics.RecordRunDuration(string(c.ID()), "persist", o.deps.Clock.Now().Sub(tPersistStart).Seconds())
+
+	// Record terminal run state and total execution duration
+	if out.Run != nil && out.Run.Terminal() {
+		o.deps.Metrics.RecordRun(string(c.ID()), string(out.Run.State()))
+		o.deps.Metrics.RecordRunDuration(string(c.ID()), "total", o.deps.Clock.Now().Sub(started).Seconds())
 	}
 	return out, nil
 }
@@ -113,17 +184,29 @@ func (o *Orchestrator) execute(ctx context.Context, c *domain.Check, r *domain.R
 		})
 	}
 
-	secrets, err := o.deps.Secrets.Resolve(ctx, def.Source.SecretRefs())
-	if err != nil {
-		// A credential that will not resolve cannot be retried into
-		// existence, so classify it as auth regardless of what the resolver
-		// reported.
-		f := domain.Classify(err)
-		f.Class = domain.ClassAuth
-		return o.fail(r, f)
+	var secrets domain.SecretBundle
+	if o.deps.Secrets != nil {
+		var err error
+		secrets, err = o.deps.Secrets.Resolve(ctx, def.Source.SecretRefs())
+		if err != nil {
+			// A credential that will not resolve cannot be retried into
+			// existence, so classify it as auth regardless of what the resolver
+			// reported.
+			f := domain.Classify(err)
+			f.Class = domain.ClassAuth
+			return o.fail(r, f)
+		}
+	} else if len(def.Source.SecretRefs()) > 0 {
+		return o.fail(r, domain.Failure{
+			Class:   domain.ClassAuth,
+			Code:    "secret_resolver_missing",
+			Summary: "this check requires secrets but no secret resolver is configured",
+		})
 	}
 
+	tFetchStart := o.deps.Clock.Now()
 	raw, err := o.deps.Source.Fetch(ctx, def.Source, secrets)
+	o.deps.Metrics.RecordRunDuration(string(c.ID()), "fetch", o.deps.Clock.Now().Sub(tFetchStart).Seconds())
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return o.interrupt(r, "Agentd was shutting down while this check was running")
@@ -134,7 +217,9 @@ func (o *Orchestrator) execute(ctx context.Context, c *domain.Check, r *domain.R
 	// Fingerprint before extracting. It has to work on a source whose binding
 	// is already broken, because that is exactly when knowing the shape
 	// changed is worth something.
+	tFPStart := o.deps.Clock.Now()
 	fp, err := o.deps.Fingerprint.Fingerprint(ctx, raw)
+	o.deps.Metrics.RecordRunDuration(string(c.ID()), "fingerprint", o.deps.Clock.Now().Sub(tFPStart).Seconds())
 	if err != nil {
 		return o.fail(r, domain.Classify(err))
 	}
@@ -151,7 +236,9 @@ func (o *Orchestrator) execute(ctx context.Context, c *domain.Check, r *domain.R
 	}
 	out := Outcome{Run: r, Snapshot: snap, Captured: true}
 
+	tExtStart := o.deps.Clock.Now()
 	extraction, err := o.deps.Extract.Extract(ctx, raw, binding)
+	o.deps.Metrics.RecordRunDuration(string(c.ID()), "extract", o.deps.Clock.Now().Sub(tExtStart).Seconds())
 	if err != nil {
 		out.Run = o.fail(r, domain.Classify(err)).Run
 		return out
@@ -176,14 +263,53 @@ func (o *Orchestrator) execute(ctx context.Context, c *domain.Check, r *domain.R
 		// Nothing to compare against. A first observation is reported as a
 		// change rather than as quiet, because calling it quiet would claim
 		// a comparison that never happened.
-		_ = r.Changed(o.deps.Clock.Now(), snap.ID(), extraction, "this is the first time this check has run")
+		explanation := "this is the first time this check has run"
+		if o.deps.Model != nil {
+			if resp, mErr := o.deps.Model.Complete(ctx, ports.ModelRequest{
+				Purpose:       ports.PurposeExplain,
+				Prompt:        fmt.Sprintf("Summarize initial observation for check %q: %+v", c.ID(), extraction),
+				Deterministic: true,
+			}); mErr == nil && resp.Text != "" {
+				explanation = resp.Text
+			}
+		}
+		_ = r.Changed(o.deps.Clock.Now(), snap.ID(), extraction, explanation)
 	case err != nil:
 		out.Run = o.fail(r, domain.Classify(err)).Run
 		return out
 	case extraction.Equal(previous):
+		// Hash gate: if normalized payload is unchanged, finish quiet.
+		// Crucial: Model evaluation is NEVER invoked when hash/payload is unchanged,
+		// honoring the cost architecture.
 		_ = r.Quiet(o.deps.Clock.Now(), snap.ID(), extraction)
 	default:
-		_ = r.Changed(o.deps.Clock.Now(), snap.ID(), extraction, describe(def.Intent))
+		// Graceful degradation: if model evaluation is shed under pressure, mark changed directly
+		if o.Degradation().ShedsModel() {
+			_ = r.Changed(o.deps.Clock.Now(), snap.ID(), extraction, describe(def.Intent)+" (model evaluation bypassed under load shedding)")
+			return out
+		}
+
+		// Extraction differs: invoke structured change evaluation.
+		tEvalStart := o.deps.Clock.Now()
+		eval, evalErr := EvaluateChange(ctx, o.deps.Model, def.Intent, previous, extraction, DefaultMaxExcerptBytes)
+		o.deps.Metrics.RecordRunDuration(string(c.ID()), "evaluate", o.deps.Clock.Now().Sub(tEvalStart).Seconds())
+		if evalErr != nil {
+			out.Run = o.fail(r, domain.Classify(evalErr)).Run
+			return out
+		}
+		switch eval.Verdict {
+		case VerdictUnchanged:
+			_ = r.Quiet(o.deps.Clock.Now(), snap.ID(), extraction)
+		case VerdictUncertain:
+			_ = r.Degrade(o.deps.Clock.Now(), snap.ID(), extraction, domain.Failure{
+				Class:   domain.ClassSemantic,
+				Code:    "uncertain_evaluation",
+				Summary: "the change could not be verified with confidence",
+				Detail:  eval.Explanation,
+			})
+		default: // VerdictChanged
+			_ = r.Changed(o.deps.Clock.Now(), snap.ID(), extraction, eval.Explanation)
+		}
 	}
 	return out
 }
@@ -228,8 +354,11 @@ func (o *Orchestrator) persist(ctx context.Context, out Outcome) error {
 	}
 	return o.deps.Store.Update(ctx, func(ctx context.Context, tx ports.Tx) error {
 		if out.Captured {
-			if err := tx.PutSnapshot(ctx, out.Snapshot); err != nil {
-				return err
+			// Graceful degradation: under reduced retention, only persist snapshots that succeeded
+			if !o.Degradation().ReducesRetention() || out.Run.State().Succeeded() {
+				if err := tx.PutSnapshot(ctx, out.Snapshot); err != nil {
+					return err
+				}
 			}
 			// A run that extracted cleanly proves this capture is one a
 			// repair can later be verified against.

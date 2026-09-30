@@ -17,20 +17,13 @@ import (
 	"github.com/champion19007/agentd/internal/ports"
 )
 
-// Classification is this adapter's real job.
-//
-// Fetching bytes is easy; saying what a failure means is the part that decides
-// whether Agentd retries quietly, wakes somebody up, or asks a model to propose
-// a repair. So the rules are written out here rather than inferred at the call
-// site, and the adapter deliberately never reports ClassStructural: whether a
-// source has changed shape is a judgement about intent, which only the
-// extractor and the core can make. The worst this adapter can say is "I could
-// not read it", and the core decides what that is worth.
-
 // Options configure a Source.
 type Options struct {
 	// Timeout bounds one fetch. Zero means DefaultTimeout.
 	Timeout time.Duration
+
+	// ConnectTimeout bounds connection establishment (TCP/TLS handshake). Zero means DefaultConnectTimeout.
+	ConnectTimeout time.Duration
 
 	// MaxBytes caps how much of a response is read. Zero means DefaultMaxBytes.
 	// The cap exists because a check pointed at something enormous should fail
@@ -41,6 +34,10 @@ type Options struct {
 	// courteous default for something that fetches a page on a schedule.
 	UserAgent string
 
+	// AllowPrivateIPs permits requests to private, loopback, and link-local addresses.
+	// False by default for SSRF protection.
+	AllowPrivateIPs bool
+
 	// Client overrides the HTTP client, for tests.
 	Client *http.Client
 }
@@ -48,17 +45,67 @@ type Options struct {
 const (
 	// DefaultTimeout bounds one fetch.
 	DefaultTimeout = 30 * time.Second
+	// DefaultConnectTimeout bounds the initial TCP connection.
+	DefaultConnectTimeout = 10 * time.Second
 	// DefaultMaxBytes caps a response at 8 MiB.
 	DefaultMaxBytes = 8 << 20
 	// DefaultUserAgent identifies Agentd.
 	DefaultUserAgent = "agentd/1 (+https://github.com/champion19007/agentd)"
 )
 
+// ssrfError is returned when a connection target resolves to a forbidden network address.
+type ssrfError struct {
+	host string
+	ip   string
+}
+
+func (e *ssrfError) Error() string {
+	return fmt.Sprintf("ssrf: blocked request to private or local address %s (%s)", e.host, e.ip)
+}
+
+var privateIPBlocks []*net.IPNet
+
+func init() {
+	for _, cidr := range []string{
+		"127.0.0.0/8",      // IPv4 loopback
+		"10.0.0.0/8",       // RFC1918
+		"172.16.0.0/12",    // RFC1918
+		"192.168.0.0/16",   // RFC1918
+		"169.254.0.0/16",   // IPv4 link-local
+		"100.64.0.0/10",    // Shared address space (CGNAT)
+		"0.0.0.0/8",        // Current network
+		"::1/128",          // IPv6 loopback
+		"fc00::/7",         // IPv6 unique local (private)
+		"fe80::/10",        // IPv6 link-local
+		"::/128",           // IPv6 unspecified
+	} {
+		_, block, err := net.ParseCIDR(cidr)
+		if err == nil {
+			privateIPBlocks = append(privateIPBlocks, block)
+		}
+	}
+}
+
+// isPrivateOrLocal reports whether an IP address belongs to loopback, private,
+// or link-local ranges.
+func isPrivateOrLocal(ip net.IP) bool {
+	if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsPrivate() {
+		return true
+	}
+	for _, block := range privateIPBlocks {
+		if block.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
 // Source fetches over HTTP.
 type Source struct {
-	client    *http.Client
-	maxBytes  int64
-	userAgent string
+	client          *http.Client
+	maxBytes        int64
+	userAgent       string
+	allowPrivateIPs bool
 }
 
 var _ ports.Source = (*Source)(nil)
@@ -69,15 +116,63 @@ func New(opts Options) *Source {
 	if timeout <= 0 {
 		timeout = DefaultTimeout
 	}
+	connectTimeout := opts.ConnectTimeout
+	if connectTimeout <= 0 {
+		connectTimeout = DefaultConnectTimeout
+	}
 	client := opts.Client
 	if client == nil {
+		dialer := &net.Dialer{
+			Timeout:   connectTimeout,
+			KeepAlive: 30 * time.Second,
+		}
+		transport := &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, port, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, err
+				}
+				if !opts.AllowPrivateIPs {
+					if ip := net.ParseIP(host); ip != nil {
+						if isPrivateOrLocal(ip) {
+							return nil, &ssrfError{host: host, ip: ip.String()}
+						}
+					} else {
+						ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+						if err != nil {
+							return nil, err
+						}
+						if len(ips) == 0 {
+							return nil, fmt.Errorf("no IP address found for %s", host)
+						}
+						for _, ip := range ips {
+							if isPrivateOrLocal(ip) {
+								return nil, &ssrfError{host: host, ip: ip.String()}
+							}
+						}
+						// Pin connection to first verified IP to protect against DNS rebinding
+						addr = net.JoinHostPort(ips[0].String(), port)
+					}
+				}
+				return dialer.DialContext(ctx, network, addr)
+			},
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          100,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		}
+
 		client = &http.Client{
-			Timeout: timeout,
-			// Redirects are followed, but not indefinitely: a redirect loop
-			// should surface as a failure rather than as a hang.
+			Timeout:   timeout,
+			Transport: transport,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				if len(via) >= 5 {
 					return errors.New("stopped after 5 redirects")
+				}
+				if err := checkURL(req.URL.String(), opts.AllowPrivateIPs); err != nil {
+					return err
 				}
 				return nil
 			},
@@ -91,7 +186,12 @@ func New(opts Options) *Source {
 	if ua == "" {
 		ua = DefaultUserAgent
 	}
-	return &Source{client: client, maxBytes: maxBytes, userAgent: ua}
+	return &Source{
+		client:          client,
+		maxBytes:        maxBytes,
+		userAgent:       ua,
+		allowPrivateIPs: opts.AllowPrivateIPs,
+	}
 }
 
 // Fetch retrieves the source.
@@ -103,7 +203,7 @@ func (s *Source) Fetch(ctx context.Context, spec domain.SourceSpec, secrets doma
 			Summary: fmt.Sprintf("this check is a %q source and cannot be fetched over HTTP", spec.Kind),
 		}
 	}
-	if err := checkURL(spec.URL); err != nil {
+	if err := checkURL(spec.URL, s.allowPrivateIPs); err != nil {
 		return domain.RawResponse{}, err
 	}
 
@@ -150,8 +250,6 @@ func (s *Source) Fetch(ctx context.Context, spec domain.SourceSpec, secrets doma
 		return domain.RawResponse{}, *f
 	}
 
-	// One byte over the cap so that hitting it exactly is distinguishable from
-	// a body that happens to be exactly the cap.
 	body, err := io.ReadAll(io.LimitReader(resp.Body, s.maxBytes+1))
 	if err != nil {
 		return domain.RawResponse{}, domain.Failure{
@@ -178,7 +276,7 @@ func (s *Source) Fetch(ctx context.Context, spec domain.SourceSpec, secrets doma
 }
 
 // checkURL rejects addresses Agentd will not fetch.
-func checkURL(raw string) error {
+func checkURL(raw string, allowPrivate bool) error {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return domain.Failure{
@@ -188,8 +286,6 @@ func checkURL(raw string) error {
 			Detail:  err.Error(),
 		}
 	}
-	// file:// and friends would turn a check definition into arbitrary local
-	// file read. A check watches external sources; that is what it is for.
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return domain.Failure{
 			Class:   domain.ClassFatal,
@@ -204,11 +300,39 @@ func checkURL(raw string) error {
 			Summary: "this check's address has no host",
 		}
 	}
+
+	if !allowPrivate {
+		host := u.Hostname()
+		if strings.EqualFold(host, "localhost") {
+			return domain.Failure{
+				Class:   domain.ClassFatal,
+				Code:    "ssrf_blocked",
+				Summary: "requests to localhost or private/loopback addresses are forbidden by default",
+			}
+		}
+		if ip := net.ParseIP(host); ip != nil && isPrivateOrLocal(ip) {
+			return domain.Failure{
+				Class:   domain.ClassFatal,
+				Code:    "ssrf_blocked",
+				Summary: fmt.Sprintf("requests to private, loopback or link-local address %s are forbidden", ip),
+			}
+		}
+	}
 	return nil
 }
 
 // classifyTransport turns a connection-level error into a failure class.
 func classifyTransport(err error) domain.Failure {
+	var ssrf *ssrfError
+	if errors.As(err, &ssrf) || strings.Contains(err.Error(), "ssrf:") {
+		return domain.Failure{
+			Class:   domain.ClassFatal,
+			Code:    "ssrf_blocked",
+			Summary: "requests to private, loopback or link-local addresses are forbidden by default",
+			Detail:  err.Error(),
+		}
+	}
+
 	switch {
 	case errors.Is(err, context.Canceled):
 		return domain.Failure{
@@ -229,10 +353,6 @@ func classifyTransport(err error) domain.Failure {
 	var dns *net.DNSError
 	if errors.As(err, &dns) {
 		if dns.IsNotFound {
-			// A name that does not resolve is usually a typo or a decommissioned
-			// host, and neither is fixed by trying again. But DNS also fails in
-			// ways that look like this during an outage, so it stays transient
-			// and the repeated failures are what surface it.
 			return domain.Failure{
 				Class:   domain.ClassTransient,
 				Code:    "dns_not_found",
@@ -248,8 +368,6 @@ func classifyTransport(err error) domain.Failure {
 		}
 	}
 
-	// Certificate problems are not transient: they need a person, either to
-	// fix the source or to decide to trust it.
 	if strings.Contains(err.Error(), "x509") || strings.Contains(err.Error(), "certificate") {
 		return domain.Failure{
 			Class:   domain.ClassAuth,
@@ -294,7 +412,6 @@ func classifyStatus(resp *http.Response) *domain.Failure {
 
 	case code == http.StatusUnauthorized, code == http.StatusForbidden,
 		code == http.StatusProxyAuthRequired:
-		// Only a person can fix a credential, so retrying is noise.
 		return &domain.Failure{
 			Class:   domain.ClassAuth,
 			Code:    "unauthorised",
@@ -302,9 +419,6 @@ func classifyStatus(resp *http.Response) *domain.Failure {
 		}
 
 	case code == http.StatusNotFound, code == http.StatusGone:
-		// Note: not structural. A 404 means the address is wrong, not that the
-		// page changed shape, and proposing a new locator for a page that is
-		// not there would be nonsense.
 		return &domain.Failure{
 			Class:   domain.ClassFatal,
 			Code:    "not_found",

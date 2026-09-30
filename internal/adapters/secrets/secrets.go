@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -128,7 +129,18 @@ func (d *Dir) Resolve(_ context.Context, refs []domain.SecretRef) (domain.Secret
 			continue
 		}
 
-		raw, err := os.ReadFile(filepath.Join(d.Path, name))
+		filePath := filepath.Join(d.Path, name)
+		if fi, err := os.Stat(filePath); err == nil {
+			if runtime.GOOS != "windows" && (fi.Mode().Perm()&0004 != 0) {
+				return nil, domain.Failure{
+					Class:   domain.ClassAuth,
+					Code:    "insecure_secret_permissions",
+					Summary: fmt.Sprintf("refusing to read secret %q from file %q with world-readable permissions (%04o); mode must be 0600 or 0400", name, filePath, fi.Mode().Perm()),
+				}
+			}
+		}
+
+		raw, err := os.ReadFile(filePath)
 		if err != nil {
 			missing = append(missing, name)
 			continue

@@ -273,6 +273,80 @@ func (x q) Incidents(ctx context.Context, id domain.CheckID) (*domain.IncidentLo
 	return domain.RestoreIncidentLog(id, incidents)
 }
 
+func (x q) OpenIncidents(ctx context.Context) ([]*domain.Incident, error) {
+	rows, err := x.db.QueryContext(ctx, `
+		SELECT id, check_id, state, cause_json, opened_at, closed_at, max_attempts, resolution
+		  FROM incidents
+		 WHERE tenant_id = ? AND state IN ('open', 'awaiting_approval')
+		 ORDER BY opened_at ASC`, x.tenant)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: reading open incidents: %w", err)
+	}
+
+	type row struct {
+		id, checkID, state, cause, openedAt, resolution string
+		closedAt                                       sql.NullString
+		maxAttempts                                    int
+	}
+	var raw []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.checkID, &r.state, &r.cause, &r.openedAt, &r.closedAt,
+			&r.maxAttempts, &r.resolution); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		raw = append(raw, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	incidents := make([]*domain.Incident, 0, len(raw))
+	for _, r := range raw {
+		incidentID := domain.IncidentID(r.id)
+		checkID := domain.CheckID(r.checkID)
+
+		var cause domain.Failure
+		if err := decodeJSON(r.cause, &cause); err != nil {
+			return nil, err
+		}
+		openedAt, err := decodeTime(sql.NullString{String: r.openedAt, Valid: true})
+		if err != nil {
+			return nil, err
+		}
+		closedAt, err := decodeTime(r.closedAt)
+		if err != nil {
+			return nil, err
+		}
+
+		attempts, proposal, err := x.repairHistory(ctx, incidentID)
+		if err != nil {
+			return nil, err
+		}
+
+		inc, err := domain.RestoreIncident(domain.RestoredIncident{
+			ID:          incidentID,
+			CheckID:     checkID,
+			State:       domain.IncidentState(r.state),
+			Cause:       cause,
+			OpenedAt:    openedAt,
+			ClosedAt:    closedAt,
+			MaxAttempts: r.maxAttempts,
+			Attempts:    attempts,
+			Proposal:    proposal,
+			Resolution:  r.resolution,
+		})
+		if err != nil {
+			return nil, err
+		}
+		incidents = append(incidents, inc)
+	}
+
+	return incidents, nil
+}
+
 // repairHistory reads an incident's attempts and rebuilds its standing
 // proposal, if it has one.
 func (x q) repairHistory(ctx context.Context, id domain.IncidentID) ([]domain.RepairAttempt, *domain.RepairProposal, error) {

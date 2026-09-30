@@ -54,6 +54,8 @@ const (
 	// PurposeExplain turns a technical failure into something a human can
 	// act on.
 	PurposeExplain ModelPurpose = "explain"
+	// PurposeEvaluate semantically compares extracted content against intent.
+	PurposeEvaluate ModelPurpose = "evaluate"
 )
 
 // ModelRequest is a provider-neutral completion request. It carries no
@@ -174,8 +176,16 @@ type Reader interface {
 	// at-most-one-open invariant with it.
 	Incidents(ctx context.Context, id domain.CheckID) (*domain.IncidentLog, error)
 
+	// OpenIncidents returns every incident currently in an open state
+	// (IncidentOpen or IncidentAwaitingApproval) across all checks.
+	OpenIncidents(ctx context.Context) ([]*domain.Incident, error)
+
 	// AuditTrail returns recorded events, newest first.
 	AuditTrail(ctx context.Context, limit int) ([]domain.AuditEvent, error)
+
+	// NonTerminalRuns returns all runs in StatePending or StateRunning,
+	// used for crash recovery at daemon startup.
+	NonTerminalRuns(ctx context.Context) ([]*domain.Run, error)
 }
 
 // Writer is the mutating half of the store, available only inside a

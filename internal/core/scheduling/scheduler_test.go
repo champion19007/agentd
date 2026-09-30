@@ -8,6 +8,7 @@ package scheduling
 import (
 	"context"
 	"errors"
+	"sort"
 	"testing"
 	"time"
 
@@ -47,33 +48,62 @@ func (c *testClock) Sleep(ctx context.Context, d time.Duration) error {
 	return ctx.Err()
 }
 
-// fakeStore implements only the two methods the scheduler calls. The embedded
-// interface supplies the rest of the method set so this stays a few lines
-// rather than a generated mock; any method the scheduler is not supposed to
-// call panics, which is the behaviour we want from a test double.
+// fakeStore implements only the methods the scheduler calls.
 type fakeStore struct {
 	ports.Store
-	checks []*domain.Check
-	ran    map[domain.RunKey]bool
+	checks         []*domain.Check
+	ran            map[domain.RunKey]bool
+	enabledErr     error
+	runForSlotErr  error
+	recentRunsErr  error
 }
 
 func (s *fakeStore) EnabledChecks(context.Context) ([]*domain.Check, error) {
+	if s.enabledErr != nil {
+		return nil, s.enabledErr
+	}
 	return s.checks, nil
 }
 
 func (s *fakeStore) RunForSlot(_ context.Context, id domain.CheckID, slot domain.Slot) (*domain.Run, error) {
+	if s.runForSlotErr != nil {
+		return nil, s.runForSlotErr
+	}
 	if s.ran[domain.RunKey{CheckID: id, Slot: slot}] {
 		return &domain.Run{}, nil
 	}
 	return nil, ports.ErrNotFound
 }
 
+func (s *fakeStore) RecentRuns(_ context.Context, id domain.CheckID, limit int) ([]*domain.Run, error) {
+	if s.recentRunsErr != nil {
+		return nil, s.recentRunsErr
+	}
+	var out []*domain.Run
+	for k, ran := range s.ran {
+		if k.CheckID == id && ran {
+			r, _ := domain.NewRun(domain.RunID("run-"+string(id)), id, k.Slot, 1, base)
+			_ = r.Quiet(base, "snap", domain.Extraction{Kind: domain.IntentScalar})
+			out = append(out, r)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Slot() > out[j].Slot() })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 // recorder is a Runner that remembers what it was asked to run.
 type recorder struct {
-	calls []domain.RunKey
+	calls  []domain.RunKey
+	runErr error
 }
 
 func (r *recorder) Run(_ context.Context, c *domain.Check, slot domain.Slot) error {
+	if r.runErr != nil {
+		return r.runErr
+	}
 	r.calls = append(r.calls, domain.RunKey{CheckID: c.ID(), Slot: slot})
 	return nil
 }
@@ -273,3 +303,296 @@ func TestLoopSkipsASlotThatAlreadyRan(t *testing.T) {
 		t.Errorf("the loop ran %v, want nothing: that slot already had a run", rec.calls)
 	}
 }
+
+func checkWithPolicy(t *testing.T, id domain.CheckID, interval time.Duration, catchUp domain.CatchUpPolicy, priority int) *domain.Check {
+	t.Helper()
+	c, err := domain.NewCheck(id, domain.Definition{
+		Intent: domain.ScalarIntent{
+			Label:   "price",
+			Purpose: "the advertised price",
+			Type:    domain.TypeNumber,
+		},
+		Source:   domain.SourceSpec{Kind: domain.SourceHTTP, URL: "https://example.test"},
+		Schedule: domain.Schedule{Interval: interval, CatchUp: catchUp},
+		Policy:   domain.Policy{Priority: priority},
+		CreatedAt: base,
+	})
+	if err != nil {
+		t.Fatalf("NewCheck: %v", err)
+	}
+	return c
+}
+
+func TestCatchUpPolicies(t *testing.T) {
+	// Base is 12:00.
+	// Last run was slot at 10:00 (slotBase - 2).
+	// Now is 13:00 (slotBase + 1). Missed slots: 11:00, 12:00, 13:00.
+	interval := time.Hour
+	now := base.Add(time.Hour)
+	currentSlot := domain.Schedule{Interval: interval}.SlotAt(now)
+	lastSlot := currentSlot - 3 // ran 3 slots ago
+
+	ctx := context.Background()
+
+	t.Run("CatchUpSkip schedules only current slot", func(t *testing.T) {
+		c := checkWithPolicy(t, "chk-skip", interval, domain.CatchUpSkip, 0)
+		store := &fakeStore{
+			checks: []*domain.Check{c},
+			ran:    map[domain.RunKey]bool{{CheckID: "chk-skip", Slot: lastSlot}: true},
+		}
+		s := New(&testClock{now: now}, fixedRandom(0), store, noJitter())
+
+		due, err := s.DueChecks(ctx, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(due) != 1 {
+			t.Fatalf("expected 1 due slot for skip policy, got %d", len(due))
+		}
+		if due[0].Slot != currentSlot {
+			t.Errorf("expected due slot %d, got %d", currentSlot, due[0].Slot)
+		}
+	})
+
+	t.Run("CatchUpOnce schedules exactly one run for current slot", func(t *testing.T) {
+		c := checkWithPolicy(t, "chk-once", interval, domain.CatchUpOnce, 0)
+		store := &fakeStore{
+			checks: []*domain.Check{c},
+			ran:    map[domain.RunKey]bool{{CheckID: "chk-once", Slot: lastSlot}: true},
+		}
+		s := New(&testClock{now: now}, fixedRandom(0), store, noJitter())
+
+		due, err := s.DueChecks(ctx, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(due) != 1 {
+			t.Fatalf("expected 1 due slot for once policy, got %d", len(due))
+		}
+		if due[0].Slot != currentSlot {
+			t.Errorf("expected due slot %d, got %d", currentSlot, due[0].Slot)
+		}
+	})
+
+	t.Run("CatchUpBackfill schedules all missed slots in order", func(t *testing.T) {
+		c := checkWithPolicy(t, "chk-backfill", interval, domain.CatchUpBackfill, 0)
+		store := &fakeStore{
+			checks: []*domain.Check{c},
+			ran:    map[domain.RunKey]bool{{CheckID: "chk-backfill", Slot: lastSlot}: true},
+		}
+		s := New(&testClock{now: now}, fixedRandom(0), store, noJitter())
+
+		due, err := s.DueChecks(ctx, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		expectedSlots := []domain.Slot{lastSlot + 1, lastSlot + 2, currentSlot}
+		if len(due) != len(expectedSlots) {
+			t.Fatalf("expected %d due slots for backfill, got %d", len(expectedSlots), len(due))
+		}
+		for i, expected := range expectedSlots {
+			if due[i].Slot != expected {
+				t.Errorf("due[%d] slot = %d, want %d", i, due[i].Slot, expected)
+			}
+		}
+	})
+}
+
+func TestSchedulerPrioritizesHigherPriorityChecks(t *testing.T) {
+	ctx := context.Background()
+	cLow := checkWithPolicy(t, "chk-low", time.Hour, domain.CatchUpOnce, 1)
+	cHigh := checkWithPolicy(t, "chk-high", time.Hour, domain.CatchUpOnce, 10)
+	cMid := checkWithPolicy(t, "chk-mid", time.Hour, domain.CatchUpOnce, 5)
+
+	store := &fakeStore{
+		checks: []*domain.Check{cLow, cHigh, cMid},
+		ran:    map[domain.RunKey]bool{},
+	}
+	s := New(&testClock{now: base}, fixedRandom(0), store, noJitter())
+
+	due, err := s.DueChecks(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 3 {
+		t.Fatalf("expected 3 due checks, got %d", len(due))
+	}
+	if due[0].Check.ID() != "chk-high" || due[1].Check.ID() != "chk-mid" || due[2].Check.ID() != "chk-low" {
+		t.Errorf("order = [%s, %s, %s], want [chk-high, chk-mid, chk-low]",
+			due[0].Check.ID(), due[1].Check.ID(), due[2].Check.ID())
+	}
+}
+
+func TestTickDoesNotSleepAndDispatchesDue(t *testing.T) {
+	ctx := context.Background()
+	c := check(t, "chk-1", time.Hour)
+	slot := c.Schedule().SlotAt(base)
+
+	clk := &testClock{now: base}
+	store := &fakeStore{
+		checks: []*domain.Check{c},
+		ran:    map[domain.RunKey]bool{},
+	}
+	s := New(clk, fixedRandom(0), store, noJitter())
+	rec := &recorder{}
+
+	if err := s.Tick(ctx, base, rec); err != nil {
+		t.Fatal(err)
+	}
+	if len(clk.slept) != 0 {
+		t.Errorf("Tick slept %d times; the scheduler itself must NOT sleep", len(clk.slept))
+	}
+	if len(rec.calls) != 1 || rec.calls[0].Slot != slot {
+		t.Errorf("expected 1 call for slot %d, got %v", slot, rec.calls)
+	}
+}
+
+func TestMultipleSchedulerInvocationsDoNotProduceDuplicateRuns(t *testing.T) {
+	ctx := context.Background()
+	c := check(t, "chk-1", time.Hour)
+	slot := c.Schedule().SlotAt(base)
+
+	store := &fakeStore{
+		checks: []*domain.Check{c},
+		ran:    map[domain.RunKey]bool{},
+	}
+	s := New(&testClock{now: base}, fixedRandom(0), store, noJitter())
+
+	// First tick finds it due
+	due1, err := s.DueChecks(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due1) != 1 {
+		t.Fatalf("first DueChecks = %d, want 1", len(due1))
+	}
+
+	// Mark slot as ran (as would happen after claim)
+	store.ran[domain.RunKey{CheckID: c.ID(), Slot: slot}] = true
+
+	// Second tick at same instant finds 0 due
+	due2, err := s.DueChecks(ctx, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due2) != 0 {
+		t.Errorf("second DueChecks = %d, want 0; duplicate runs must not be produced", len(due2))
+	}
+}
+
+func TestScheduler_CoverageAndEdgeCases(t *testing.T) {
+	ctx := context.Background()
+	c := check(t, "chk-1", time.Hour)
+
+	// 1. NextWake public method
+	s := newScheduler(noJitter(), 0)
+	dur := s.NextWake(base, []*domain.Check{c})
+	if dur <= 0 {
+		t.Errorf("NextWake = %v, want > 0", dur)
+	}
+
+	// 2. due backwards compatibility method
+	store := &fakeStore{
+		checks: []*domain.Check{c},
+		ran:    map[domain.RunKey]bool{},
+	}
+	s = New(&testClock{now: base}, fixedRandom(0), store, noJitter())
+	dueList, err := s.due(ctx, []*domain.Check{c}, base)
+	if err != nil {
+		t.Fatalf("s.due error: %v", err)
+	}
+	if len(dueList) != 1 || dueList[0].ID() != c.ID() {
+		t.Errorf("s.due = %v, want [%v]", dueList, c.ID())
+	}
+
+	// s.due error path
+	storeErr := &fakeStore{
+		checks:        []*domain.Check{c},
+		recentRunsErr: errors.New("db error"),
+	}
+	sErr := New(&testClock{now: base}, fixedRandom(0), storeErr, noJitter())
+	if _, err := sErr.due(ctx, []*domain.Check{c}, base); err == nil {
+		t.Error("s.due expected error when store fails, got nil")
+	}
+
+	// 3. Tick runner error
+	recErr := &recorder{runErr: errors.New("runner exploded")}
+	if err := s.Tick(ctx, base, recErr); err == nil {
+		t.Error("Tick expected error on runner error, got nil")
+	}
+
+	// Tick DueChecks error
+	storeEnabledErr := &fakeStore{enabledErr: errors.New("store failed")}
+	sTickErr := New(&testClock{now: base}, fixedRandom(0), storeEnabledErr, noJitter())
+	if err := sTickErr.Tick(ctx, base, &recorder{}); err == nil {
+		t.Error("Tick expected error when store.EnabledChecks fails, got nil")
+	}
+
+	// 4. DueChecks store error
+	if _, err := sTickErr.DueChecks(ctx, base); err == nil {
+		t.Error("DueChecks expected error when EnabledChecks fails, got nil")
+	}
+
+	// 5. dueWithChecks: recentRuns error
+	storeRecentErr := &fakeStore{
+		checks:        []*domain.Check{c},
+		recentRunsErr: errors.New("recent error"),
+	}
+	sRecentErr := New(&testClock{now: base}, fixedRandom(0), storeRecentErr, noJitter())
+	if _, err := sRecentErr.DueChecks(ctx, base); err == nil {
+		t.Error("DueChecks expected error when RecentRuns fails, got nil")
+	}
+
+	// dueWithChecks: RunForSlot error (non-notFound)
+	storeSlotErr := &fakeStore{
+		checks:        []*domain.Check{c},
+		runForSlotErr: errors.New("run for slot error"),
+	}
+	sSlotErr := New(&testClock{now: base}, fixedRandom(0), storeSlotErr, noJitter())
+	if _, err := sSlotErr.DueChecks(ctx, base); err == nil {
+		t.Error("DueChecks expected error when RunForSlot fails, got nil")
+	}
+
+	// 6. Loop error paths
+	// Loop with store.EnabledChecks error
+	clk := &testClock{now: base, budget: 2, cancel: func() {}}
+	sLoopErr1 := New(clk, fixedRandom(0), storeEnabledErr, noJitter())
+	if err := sLoopErr1.Loop(ctx, &recorder{}); err == nil {
+		t.Error("Loop expected error when store.EnabledChecks fails")
+	}
+
+	// Loop with dueWithChecks error
+	sLoopErr2 := New(clk, fixedRandom(0), storeRecentErr, noJitter())
+	if err := sLoopErr2.Loop(ctx, &recorder{}); err == nil {
+		t.Error("Loop expected error when dueWithChecks fails")
+	}
+
+	// Loop with runner error
+	sLoopErr3 := New(clk, fixedRandom(0), store, noJitter())
+	if err := sLoopErr3.Loop(ctx, recErr); err == nil {
+		t.Error("Loop expected error when runner fails")
+	}
+
+	// 7. CatchUpBackfill bounded by maxBackfill (100)
+	cBackfill := checkWithPolicy(t, "chk-bf", time.Minute, domain.CatchUpBackfill, 1)
+	sched := cBackfill.Schedule()
+	currSlot := sched.SlotAt(base)
+	// Simulate last slot was 200 slots ago
+	oldSlot := currSlot - 200
+	storeBackfill := &fakeStore{
+		checks: []*domain.Check{cBackfill},
+		ran: map[domain.RunKey]bool{
+			{CheckID: cBackfill.ID(), Slot: oldSlot}: true,
+		},
+	}
+	sBf := New(&testClock{now: base}, fixedRandom(0), storeBackfill, noJitter())
+	dueBf, err := sBf.DueChecks(ctx, base)
+	if err != nil {
+		t.Fatalf("DueChecks backfill error: %v", err)
+	}
+	// maxBackfill = 100, candidate slots are currSlot - 100 to currSlot, total 101 slots
+	if len(dueBf) != 101 {
+		t.Errorf("DueChecks backfill count = %d, want 101 (bounded by 100)", len(dueBf))
+	}
+}
+

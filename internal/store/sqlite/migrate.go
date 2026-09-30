@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,6 +35,19 @@ type migration struct {
 	sql     string
 }
 
+// MigrationInfo describes a migration step and whether it is a major schema change.
+type MigrationInfo struct {
+	Version int
+	Name    string
+	IsMajor bool
+}
+
+// isMajor reports whether a migration is classified as major (e.g. marked with 'major' or 'breaking').
+func isMajor(name string) bool {
+	lower := strings.ToLower(name)
+	return strings.Contains(lower, "major") || strings.Contains(lower, "breaking")
+}
+
 // migrate brings the database up to date. It runs on the writer pool, which
 // has a single connection, so two callers cannot migrate at once.
 func migrate(ctx context.Context, db *sql.DB) error {
@@ -54,6 +68,17 @@ func migrate(ctx context.Context, db *sql.DB) error {
 	all, err := loadMigrations()
 	if err != nil {
 		return err
+	}
+
+	// Backup recommendation before major migrations on existing databases (highest > 0)
+	if highest > 0 {
+		for _, m := range all {
+			if !applied[m.version] && isMajor(m.name) {
+				fmt.Fprintf(os.Stderr, "agentd: [BACKUP RECOMMENDED] Applying major schema migration %04d (%s). "+
+					"It is strongly recommended to run 'agentd backup --to <path> --verify' before applying major migrations to an existing database.\n",
+					m.version, m.name)
+			}
+		}
 	}
 
 	for _, m := range all {
@@ -176,4 +201,32 @@ func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	return int(v.Int64), nil
+}
+
+// PendingMigrations returns any unapplied migrations and whether any of them are major.
+func (s *Store) PendingMigrations(ctx context.Context) ([]MigrationInfo, bool, error) {
+	applied, _, err := appliedVersions(ctx, s.reader)
+	if err != nil {
+		return nil, false, err
+	}
+	all, err := loadMigrations()
+	if err != nil {
+		return nil, false, err
+	}
+	var pending []MigrationInfo
+	hasMajor := false
+	for _, m := range all {
+		if !applied[m.version] {
+			major := isMajor(m.name)
+			if major {
+				hasMajor = true
+			}
+			pending = append(pending, MigrationInfo{
+				Version: m.version,
+				Name:    m.name,
+				IsMajor: major,
+			})
+		}
+	}
+	return pending, hasMajor, nil
 }

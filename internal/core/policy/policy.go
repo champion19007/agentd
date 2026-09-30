@@ -36,6 +36,9 @@ type Situation struct {
 	// binding with, and proposing an unverified repair is the guess Agentd
 	// promises not to make.
 	HasKnownGood bool
+
+	// Degradation specifies the operational load shedding tier.
+	Degradation domain.DegradationLevel
 }
 
 // Decision is what should happen next. It describes actions rather than
@@ -202,6 +205,12 @@ func failed(s Situation, name string) Decision {
 	d.Subject = name + " is no longer where Agentd expects it"
 	d.OpenIncident = !s.IncidentOpen
 
+	if s.Degradation.ShedsHealing() {
+		d.AttemptRepair = false
+		d.Body = f.Summary + " -- healing generation is paused under system load shedding; proposal deferred."
+		return d
+	}
+
 	if !s.HasKnownGood {
 		d.Body = f.Summary + " -- Agentd has no known-good capture of this source to verify a repair against, so it will not propose one."
 		return d
@@ -228,6 +237,10 @@ func Notification(s Situation, d Decision, at time.Time) (domain.Notification, b
 	if !d.Notify {
 		return domain.Notification{}, false
 	}
+	var traceID string
+	if s.Run != nil {
+		traceID = s.Run.TraceID()
+	}
 	return domain.Notification{
 		CheckID:     s.Check.ID(),
 		Destination: s.Check.ActiveDefinition().Destination,
@@ -235,6 +248,7 @@ func Notification(s Situation, d Decision, at time.Time) (domain.Notification, b
 		Subject:     d.Subject,
 		Body:        d.Body,
 		OccurredAt:  at,
+		TraceID:     traceID,
 	}, true
 }
 
@@ -257,5 +271,6 @@ func ApprovalRequest(c *domain.Check, i *domain.Incident, at time.Time) (domain.
 		NeedsDecision: true,
 		IncidentID:    i.ID(),
 		OccurredAt:    at,
+		TraceID:       p.TraceID,
 	}, true
 }

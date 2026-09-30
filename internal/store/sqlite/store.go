@@ -144,6 +144,14 @@ func (s *Store) Incidents(ctx context.Context, id domain.CheckID) (*domain.Incid
 	return s.reads().Incidents(ctx, id)
 }
 
+func (s *Store) OpenIncidents(ctx context.Context) ([]*domain.Incident, error) {
+	return s.reads().OpenIncidents(ctx)
+}
+
+func (s *Store) NonTerminalRuns(ctx context.Context) ([]*domain.Run, error) {
+	return s.reads().NonTerminalRuns(ctx)
+}
+
 // --- checks -----------------------------------------------------------------
 
 func (x q) Check(ctx context.Context, id domain.CheckID) (*domain.Check, error) {
@@ -388,6 +396,26 @@ func (x q) RecentRuns(ctx context.Context, id domain.CheckID, limit int) ([]*dom
 		 ORDER BY created_at DESC LIMIT ?`, x.tenant, string(id), limit)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: reading runs of check %q: %w", id, err)
+	}
+	defer rows.Close()
+
+	var out []*domain.Run
+	for rows.Next() {
+		r, err := x.scanRun(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (x q) NonTerminalRuns(ctx context.Context) ([]*domain.Run, error) {
+	rows, err := x.db.QueryContext(ctx,
+		`SELECT `+runColumns+` FROM runs WHERE tenant_id = ? AND state IN ('pending', 'running')
+		 ORDER BY created_at ASC`, x.tenant)
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: reading non-terminal runs: %w", err)
 	}
 	defer rows.Close()
 

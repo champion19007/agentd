@@ -1,11 +1,12 @@
 // Package scheduling decides which checks are due and when the runner should
 // next wake up. It is pure core: it holds no timers, opens no connections and
-// reads no clock of its own.
+// reads no clock of its own. It does not sleep; outer tickers provide ticks.
 package scheduling
 
 import (
 	"context"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/champion19007/agentd/internal/core/domain"
@@ -43,9 +44,19 @@ type Runner interface {
 	Run(ctx context.Context, c *domain.Check, slot domain.Slot) error
 }
 
-// Scheduler drives the loop: ask the store which checks are enabled, work out
-// which of them have a slot that has not been run, hand those to the runner,
-// then wait until there is reason to look again.
+// DueCheck represents a check and slot combination that is eligible to run.
+type DueCheck struct {
+	Check    *domain.Check
+	Slot     domain.Slot
+	Priority int
+	LateBy   time.Duration
+}
+
+// Scheduler calculates slot boundaries, determines due checks according to
+// configured catch-up policies, and sorts work by priority.
+//
+// The Scheduler itself does NOT sleep: it receives time through an injected clock
+// or explicitly via Tick / DueChecks invocations from an outer loop or ticker.
 type Scheduler struct {
 	clock  ports.Clock
 	random ports.Random
@@ -59,7 +70,133 @@ func New(clk ports.Clock, rnd ports.Random, st ports.Store, opts Options) *Sched
 	return &Scheduler{clock: clk, random: rnd, store: st, opts: opts}
 }
 
-// Loop runs until ctx is cancelled.
+// Tick evaluates due checks at the instant 'now' and dispatches them to Runner.
+// It performs due selection and dispatch without sleeping.
+func (s *Scheduler) Tick(ctx context.Context, now time.Time, r Runner) error {
+	due, err := s.DueChecks(ctx, now)
+	if err != nil {
+		return err
+	}
+	for _, d := range due {
+		if err := r.Run(ctx, d.Check, d.Slot); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// DueChecks finds all checks with slots due to be executed at 'now', taking into
+// account each check's CatchUpPolicy (skip, once, backfill). The results are sorted
+// with higher-priority checks first, then chronologically by slot.
+func (s *Scheduler) DueChecks(ctx context.Context, now time.Time) ([]DueCheck, error) {
+	checks, err := s.store.EnabledChecks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.dueWithChecks(ctx, checks, now)
+}
+
+// dueWithChecks evaluates due slots for a given set of checks.
+func (s *Scheduler) dueWithChecks(ctx context.Context, checks []*domain.Check, now time.Time) ([]DueCheck, error) {
+	var due []DueCheck
+
+	for _, c := range checks {
+		if !c.Enabled() {
+			continue
+		}
+		sched := c.Schedule()
+		currSlot := sched.SlotAt(now)
+		policy := sched.CatchUpPolicy()
+
+		// Check the most recent run for this check
+		recent, err := s.store.RecentRuns(ctx, c.ID(), 1)
+		if err != nil && !errors.Is(err, ports.ErrNotFound) {
+			return nil, err
+		}
+
+		var candidateSlots []domain.Slot
+		if len(recent) == 0 {
+			// Never run before: schedule current slot
+			candidateSlots = append(candidateSlots, currSlot)
+		} else {
+			lastSlot := recent[0].Slot()
+			if lastSlot >= currSlot {
+				// Already ran for this slot or later
+				continue
+			}
+
+			switch policy {
+			case domain.CatchUpSkip:
+				// Skip all missed slots; only schedule current slot
+				candidateSlots = append(candidateSlots, currSlot)
+
+			case domain.CatchUpOnce:
+				// Schedule current slot as the single catch-up run
+				candidateSlots = append(candidateSlots, currSlot)
+
+			case domain.CatchUpBackfill:
+				// Schedule missed slots up to current slot, bounded to prevent exhaustion
+				start := lastSlot + 1
+				const maxBackfill = 100
+				if currSlot-start > maxBackfill {
+					start = currSlot - maxBackfill
+				}
+				for slot := start; slot <= currSlot; slot++ {
+					candidateSlots = append(candidateSlots, slot)
+				}
+			default:
+				candidateSlots = append(candidateSlots, currSlot)
+			}
+		}
+
+		// Verify against store to ensure one run per slot
+		for _, slot := range candidateSlots {
+			_, err := s.store.RunForSlot(ctx, c.ID(), slot)
+			switch {
+			case errors.Is(err, ports.ErrNotFound):
+				slotStart := sched.SlotStart(slot)
+				lateBy := now.Sub(slotStart)
+				if lateBy < 0 {
+					lateBy = 0
+				}
+				due = append(due, DueCheck{
+					Check:    c,
+					Slot:     slot,
+					Priority: c.ActiveDefinition().Policy.Priority,
+					LateBy:   lateBy,
+				})
+			case err != nil:
+				return nil, err
+			}
+		}
+	}
+
+	// Sort due checks: higher priority first; for ties, earlier slot first
+	sort.SliceStable(due, func(i, j int) bool {
+		if due[i].Priority != due[j].Priority {
+			return due[i].Priority > due[j].Priority
+		}
+		return due[i].Slot < due[j].Slot
+	})
+
+	return due, nil
+}
+
+// due is retained for backwards compatibility with existing callers.
+func (s *Scheduler) due(ctx context.Context, checks []*domain.Check, now time.Time) ([]*domain.Check, error) {
+	dueList, err := s.dueWithChecks(ctx, checks, now)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*domain.Check, 0, len(dueList))
+	for _, d := range dueList {
+		out = append(out, d.Check)
+	}
+	return out, nil
+}
+
+// Loop runs an outer process loop driving Tick and sleeping between passes until
+// ctx is cancelled.
 func (s *Scheduler) Loop(ctx context.Context, r Runner) error {
 	for {
 		now := s.clock.Now()
@@ -69,63 +206,30 @@ func (s *Scheduler) Loop(ctx context.Context, r Runner) error {
 			return err
 		}
 
-		due, err := s.due(ctx, checks, now)
+		due, err := s.dueWithChecks(ctx, checks, now)
 		if err != nil {
 			return err
 		}
-		for _, c := range due {
-			if err := r.Run(ctx, c, c.Schedule().SlotAt(now)); err != nil {
+		for _, d := range due {
+			if err := r.Run(ctx, d.Check, d.Slot); err != nil {
 				return err
 			}
 		}
 
-		// Pacing is computed from every enabled check, not just the ones that
-		// ran. A check that was already up to date this pass still has a next
-		// slot boundary, and it is often the soonest one.
-		if err := s.clock.Sleep(ctx, s.nextWake(now, checks)); err != nil {
+		// Pacing is computed from every enabled check relative to current clock time.
+		current := s.clock.Now()
+		if err := s.clock.Sleep(ctx, s.nextWake(current, checks)); err != nil {
 			return err
 		}
 	}
 }
 
-// due returns the checks whose current slot has no run yet. Slot identity is
-// what makes this exact: a check is due for slot N or it is not, with no
-// reasoning about how close a timestamp is to another timestamp.
-func (s *Scheduler) due(ctx context.Context, checks []*domain.Check, now time.Time) ([]*domain.Check, error) {
-	var out []*domain.Check
-	for _, c := range checks {
-		if !c.Enabled() {
-			continue
-		}
-		slot := c.Schedule().SlotAt(now)
-		_, err := s.store.RunForSlot(ctx, c.ID(), slot)
-		switch {
-		case errors.Is(err, ports.ErrNotFound):
-			out = append(out, c)
-		case err != nil:
-			return nil, err
-		}
-	}
-	return out, nil
+// NextWake returns how long until the soonest slot boundary among enabled checks,
+// nudged later by jitter and clamped into [MinWake, MaxWake].
+func (s *Scheduler) NextWake(now time.Time, checks []*domain.Check) time.Duration {
+	return s.nextWake(now, checks)
 }
 
-// nextWake returns how long the loop should sleep before looking for due
-// checks again, given the instant the pass started and every enabled check.
-//
-// The delay is the time until the soonest slot boundary among those checks,
-// nudged later by jitter and then clamped into [MinWake, MaxWake]. Clamping
-// last is what makes the bounds real: jitter can never push a wake past
-// MaxWake, and nothing can drive the loop below MinWake.
-//
-// Two edges matter more than they look:
-//
-// Because SlotAt floors, the next boundary is always ahead of now, but it can
-// be a nanosecond ahead when a pass happens to land just before one. MinWake
-// is what stops that from becoming a spin: a check that cannot keep up with
-// its own interval should fall behind steadily rather than pin a core.
-//
-// No checks at all still sleeps MaxWake rather than spinning, because a check
-// added while the loop is sleeping has nobody to announce it.
 func (s *Scheduler) nextWake(now time.Time, checks []*domain.Check) time.Duration {
 	delay := s.opts.MaxWake
 
@@ -140,12 +244,6 @@ func (s *Scheduler) nextWake(now time.Time, checks []*domain.Check) time.Duratio
 		}
 	}
 
-	// Jitter only ever delays. Waking early costs an empty pass, which is
-	// cheap; waking late costs a late check, which is what the operator
-	// notices. Note this is loop pacing, not per-check destampeding -- that
-	// is Schedule.Jitter's job, applied when a run is placed within its slot,
-	// because delaying the whole loop moves every check together and so
-	// spreads nothing out.
 	if s.opts.Jitter > 0 && delay > 0 {
 		delay += time.Duration(float64(delay) * s.opts.Jitter * s.random.Float64())
 	}

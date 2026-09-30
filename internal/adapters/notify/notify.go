@@ -53,6 +53,9 @@ func (w *Writer) Deliver(_ context.Context, n domain.Notification) error {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s  [%s] %s\n", n.OccurredAt.Format(time.RFC3339), n.Severity, n.Subject)
+	if n.TraceID != "" {
+		fmt.Fprintf(&b, "    Trace ID: %s\n", n.TraceID)
+	}
 	if n.Body != "" {
 		for _, line := range strings.Split(strings.TrimRight(n.Body, "\n"), "\n") {
 			fmt.Fprintf(&b, "    %s\n", line)
@@ -114,6 +117,7 @@ type payload struct {
 	NeedsDecision bool   `json:"needs_decision"`
 	Incident      string `json:"incident,omitempty"`
 	OccurredAt    string `json:"occurred_at"`
+	TraceID       string `json:"trace_id,omitempty"`
 }
 
 // Deliver posts the notification.
@@ -142,6 +146,7 @@ func (w *Webhook) Deliver(ctx context.Context, n domain.Notification) error {
 		NeedsDecision: n.NeedsDecision,
 		Incident:      string(n.IncidentID),
 		OccurredAt:    n.OccurredAt.UTC().Format(time.RFC3339),
+		TraceID:       n.TraceID,
 	})
 	if err != nil {
 		return fmt.Errorf("notify: encoding payload: %w", err)

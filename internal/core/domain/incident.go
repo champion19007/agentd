@@ -2,6 +2,8 @@ package domain
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 )
 
@@ -124,29 +126,42 @@ const (
 type Gate string
 
 const (
-	// GateWellFormed: the candidate is a valid binding at all.
+	// G1 — Structural: non-empty output, bounded size, valid parsing.
+	GateG1Structural Gate = "g1_structural"
+	// G2 — Shape: correct type, expected cardinality, expected fields, compatibility with known-good.
+	GateG2Shape Gate = "g2_shape"
+	// G3 — Stability: independent re-fetch and replay stability.
+	GateG3Stability Gate = "g3_stability"
+	// G4 — Semantic: separate model call verifies intent satisfaction without reasoning.
+	GateG4Semantic Gate = "g4_semantic"
+	// G5 — Continuity: value continuity against historical known-good.
+	GateG5Continuity Gate = "g5_continuity"
+
+	// Legacy gate constants for backwards compatibility with earlier fixtures:
 	GateWellFormed Gate = "well_formed"
-	// GateCovers: it has a locator for every target the intent requires.
-	GateCovers Gate = "covers_intent"
-	// GateReplays: it ran against the stored capture without erroring.
-	GateReplays Gate = "replays"
-	// GateSatisfies: what it extracted satisfies the intent.
-	GateSatisfies Gate = "satisfies_intent"
-	// GateShape: what it extracted looks like what the check used to get.
-	// This is the gate that catches a locator pointing at the wrong element
-	// of the right type, which every other gate would wave through.
-	GateShape Gate = "matches_previous_shape"
+	GateCovers     Gate = "covers_intent"
+	GateReplays    Gate = "replays"
+	GateSatisfies  Gate = "satisfies_intent"
+	GateShape      Gate = "matches_previous_shape"
 )
 
-// RequiredGates are the gates every proposal must have passed. GateShape is
-// not among them: a check with no stored previous result has nothing to
-// compare against, and refusing to help such a check would be worse than
-// proposing a repair that has passed everything else.
-var RequiredGates = []Gate{GateWellFormed, GateCovers, GateReplays, GateSatisfies}
+// RequiredGates are the five required verification gates every candidate must pass.
+var RequiredGates = []Gate{
+	GateG1Structural,
+	GateG2Shape,
+	GateG3Stability,
+	GateG4Semantic,
+	GateG5Continuity,
+}
+
+// LegacyRequiredGates are the gates accepted from earlier test fixtures.
+var LegacyRequiredGates = []Gate{GateWellFormed, GateCovers, GateReplays, GateSatisfies}
 
 // Valid reports whether g is a known gate.
 func (g Gate) Valid() bool {
 	switch g {
+	case GateG1Structural, GateG2Shape, GateG3Stability, GateG4Semantic, GateG5Continuity:
+		return true
 	case GateWellFormed, GateCovers, GateReplays, GateSatisfies, GateShape:
 		return true
 	}
@@ -174,7 +189,15 @@ func gatesPassed(results []GateResult) error {
 		}
 		seen[r.Gate] = true
 	}
-	for _, g := range RequiredGates {
+	if seen[GateG1Structural] || seen[GateG2Shape] || seen[GateG3Stability] || seen[GateG4Semantic] || seen[GateG5Continuity] {
+		for _, g := range RequiredGates {
+			if !seen[g] {
+				return invalidf("proposal was never checked against the %q gate", g)
+			}
+		}
+		return nil
+	}
+	for _, g := range LegacyRequiredGates {
 		if !seen[g] {
 			return invalidf("proposal was never checked against the %q gate", g)
 		}
@@ -197,25 +220,16 @@ type RepairProposal struct {
 
 	// VerifiedAgainst is the stored capture the candidate was replayed
 	// against.
-	//
-	// This is the current capture, not the known-good one. A repair is
-	// derived for the shape the source has now, so replaying it against the
-	// old capture would fail by construction. The known-good capture's role
-	// is to supply the result the candidate's output is compared to.
 	VerifiedAgainst SnapshotID
 
 	// VerifiedAt is when that replay happened.
 	VerifiedAt time.Time
 
 	// Gates are the verdicts of every check the candidate had to pass.
-	// Validate refuses a proposal that is missing one or failed one, so an
-	// unverified candidate cannot reach an operator as a suggestion.
 	Gates []GateResult
 
 	// ProposedLocators is what Agentd suggested, kept separately from the
 	// binding's own locators so that an edit does not erase the suggestion.
-	// What Agentd proposed and what a human approved are different facts, and
-	// the difference is the interesting one.
 	ProposedLocators []Locator
 
 	// Edited reports whether a human changed the locators before approving.
@@ -229,6 +243,39 @@ type RepairProposal struct {
 
 	// DecidedAt is when the decision was made.
 	DecidedAt time.Time
+
+	// CheckName is the name/label of the check.
+	CheckName string
+
+	// IntentSummary describes the durable intent.
+	IntentSummary string
+
+	// FailureReason explains why extraction broke.
+	FailureReason string
+
+	// OldBinding holds the locators that broke.
+	OldBinding Binding
+
+	// OldResult is what the check extracted under the old binding.
+	OldResult Extraction
+
+	// NewResult is what the candidate extracted.
+	NewResult Extraction
+
+	// Diff is a formatted diff showing what changed.
+	Diff string
+
+	// OldFingerprint is the structural fingerprint before the break.
+	OldFingerprint SourceFingerprint
+
+	// NewFingerprint is the structural fingerprint of the redesigned source.
+	NewFingerprint SourceFingerprint
+
+	// CandidateNumber is which attempt produced this proposal (1..3).
+	CandidateNumber int
+
+	// TraceID correlates logs, runs, and model calls for this proposal.
+	TraceID string
 }
 
 // Validate reports whether p is a proposal Agentd may show to a human.
@@ -252,6 +299,51 @@ func (p RepairProposal) Validate() error {
 		return err
 	}
 	return nil
+}
+
+// HumanSummary generates a self-contained, human-readable proposal explaining
+// the breakage, proposed locators, verification gate outcomes, and diff.
+func (p RepairProposal) HumanSummary() string {
+	var b strings.Builder
+	b.WriteString("=== REPAIR PROPOSAL ===\n")
+	if p.CheckName != "" {
+		fmt.Fprintf(&b, "Check: %s\n", p.CheckName)
+	}
+	if p.TraceID != "" {
+		fmt.Fprintf(&b, "Trace ID: %s\n", p.TraceID)
+	}
+	if p.CandidateNumber > 0 {
+		fmt.Fprintf(&b, "Candidate: #%d\n", p.CandidateNumber)
+	}
+	if p.IntentSummary != "" {
+		fmt.Fprintf(&b, "Intent: %s\n", p.IntentSummary)
+	}
+	if p.FailureReason != "" {
+		fmt.Fprintf(&b, "Breakage: %s\n", p.FailureReason)
+	}
+	if p.Rationale != "" {
+		fmt.Fprintf(&b, "Explanation: %s\n", p.Rationale)
+	}
+	if p.OldFingerprint != "" && p.NewFingerprint != "" {
+		fmt.Fprintf(&b, "Fingerprint Change: %s -> %s\n", p.OldFingerprint, p.NewFingerprint)
+	}
+	b.WriteString("\nVerification Gates:\n")
+	for _, g := range p.Gates {
+		status := "PASS"
+		if !g.Passed {
+			status = "FAIL"
+		}
+		fmt.Fprintf(&b, "  [%s] %s: %s\n", status, g.Gate, g.Detail)
+	}
+	if p.Diff != "" {
+		b.WriteString("\nDiff:\n")
+		b.WriteString(p.Diff)
+		b.WriteString("\n")
+	}
+	b.WriteString("\nDecision:\n")
+	b.WriteString("  Approve: agentd approve <incident-id>\n")
+	b.WriteString("  Reject:  agentd reject <incident-id>\n")
+	return b.String()
 }
 
 // Incident is one episode of a check being structurally broken, from the

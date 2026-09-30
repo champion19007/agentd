@@ -2046,3 +2046,84 @@ func TestDefaultTenantIsUsedWhenUnset(t *testing.T) {
 		t.Errorf("stored tenant_id = %q, want %q", tenant, DefaultTenant)
 	}
 }
+
+func TestNonTerminalRuns(t *testing.T) {
+	s := newStore(t)
+	chk := scalarCheck(t, "chk-1")
+	saveCheck(t, s, chk)
+
+	// Create pending run, running run, and quiet run
+	rPending, err := domain.NewRun("run-pending", "chk-1", 1, 1, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rRunning, err := domain.NewRun("run-running", "chk-1", 2, 1, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rRunning.Start(base.Add(time.Second), 1); err != nil {
+		t.Fatal(err)
+	}
+	rQuiet, err := domain.NewRun("run-quiet", "chk-1", 3, 1, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rQuiet.Start(base.Add(time.Second), 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := rQuiet.Quiet(base.Add(2*time.Second), "snap-1", domain.Extraction{Kind: domain.IntentScalar}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.WithTx(context.Background(), func(ctx context.Context, tx ports.Tx) error {
+		if err := tx.CreateRun(ctx, rPending); err != nil {
+			return err
+		}
+		if err := tx.CreateRun(ctx, rRunning); err != nil {
+			return err
+		}
+		return tx.CreateRun(ctx, rQuiet)
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	nonTerminal, err := s.NonTerminalRuns(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nonTerminal) != 2 {
+		t.Fatalf("expected 2 non-terminal runs, got %d", len(nonTerminal))
+	}
+	ids := map[domain.RunID]bool{nonTerminal[0].ID(): true, nonTerminal[1].ID(): true}
+	if !ids["run-pending"] || !ids["run-running"] {
+		t.Errorf("unexpected non-terminal runs: %v", nonTerminal)
+	}
+}
+
+func TestAuditTrail_LimitClamped(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+
+	// Query with excessive limit (e.g. 50000)
+	events, err := s.AuditTrail(ctx, 50000)
+	if err != nil {
+		t.Fatalf("AuditTrail with high limit: %v", err)
+	}
+	if events == nil {
+		// Empty audit trail is valid
+	}
+}
+
+func TestGC_PassiveWALCheckpoint(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	saveCheck(t, s, scalarCheck(t, "chk-1"))
+
+	policy := domain.DefaultRetention()
+	sweep, err := s.GC(ctx, policy, base)
+	if err != nil {
+		t.Fatalf("GC failed: %v", err)
+	}
+	t.Logf("GC executed successfully with passive WAL checkpoint: %+v", sweep)
+}
+

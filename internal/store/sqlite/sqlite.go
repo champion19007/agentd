@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -104,6 +105,23 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 	abs, err := filepath.Abs(opts.Path)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite: resolving %q: %w", opts.Path, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(abs), 0700); err != nil {
+		return nil, fmt.Errorf("sqlite: creating directory %q: %w", filepath.Dir(abs), err)
+	}
+
+	// Filesystem Security: Default 0600 permissions; refuse world-readable files.
+	if fi, err := os.Stat(abs); err == nil {
+		if runtime.GOOS != "windows" && (fi.Mode().Perm()&0004 != 0) {
+			return nil, fmt.Errorf("sqlite: refusing to open database file %q with insecure permissions (%04o); mode must be 0600 and cannot be world-readable", abs, fi.Mode().Perm())
+		}
+	} else if os.IsNotExist(err) {
+		f, err := os.OpenFile(abs, os.O_CREATE|os.O_RDWR, 0600)
+		if err != nil {
+			return nil, fmt.Errorf("sqlite: initializing database file %q: %w", abs, err)
+		}
+		_ = f.Close()
+		_ = os.Chmod(abs, 0600)
 	}
 
 	writer, err := open(abs, opts, false)

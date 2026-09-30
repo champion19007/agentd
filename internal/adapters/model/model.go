@@ -63,6 +63,9 @@ type Options struct {
 	// AnthropicVersion sets the api-version header. Empty means
 	// DefaultVersion.
 	AnthropicVersion string
+
+	// Metrics collects model token usage and cost metrics.
+	Metrics ports.Metrics
 }
 
 // Client calls a BYOK provider.
@@ -173,7 +176,7 @@ func (c *Client) Complete(ctx context.Context, req ports.ModelRequest) (ports.Mo
 			Class:   domain.ClassTransient,
 			Code:    "model_unreachable",
 			Summary: "the model provider could not be reached",
-			Detail:  err.Error(),
+			Detail:  scrubSecret(err.Error(), key.Reveal()),
 		}
 	}
 	defer resp.Body.Close()
@@ -184,11 +187,11 @@ func (c *Client) Complete(ctx context.Context, req ports.ModelRequest) (ports.Mo
 			Class:   domain.ClassTransient,
 			Code:    "model_read_failed",
 			Summary: "the connection to the model provider dropped",
-			Detail:  err.Error(),
+			Detail:  scrubSecret(err.Error(), key.Reveal()),
 		}
 	}
 
-	if f := classify(resp.StatusCode, raw); f != nil {
+	if f := classify(resp.StatusCode, raw, key.Reveal()); f != nil {
 		return ports.ModelResponse{}, *f
 	}
 
@@ -198,7 +201,7 @@ func (c *Client) Complete(ctx context.Context, req ports.ModelRequest) (ports.Mo
 			Class:   domain.ClassTransient,
 			Code:    "model_unreadable",
 			Summary: "the model provider's answer could not be read",
-			Detail:  err.Error(),
+			Detail:  scrubSecret(err.Error(), key.Reveal()),
 		}
 	}
 
@@ -207,6 +210,16 @@ func (c *Client) Complete(ctx context.Context, req ports.ModelRequest) (ports.Mo
 		if block.Type == "text" {
 			text.WriteString(block.Text)
 		}
+	}
+
+	if c.opts.Metrics != nil {
+		purpose := string(req.Purpose)
+		if purpose == "" {
+			purpose = "unknown"
+		}
+		totalTokens := decoded.Usage.InputTokens + decoded.Usage.OutputTokens
+		costMicros := int64(decoded.Usage.InputTokens)*3 + int64(decoded.Usage.OutputTokens)*15
+		c.opts.Metrics.RecordModelUsage(c.opts.Model, purpose, totalTokens, costMicros)
 	}
 
 	return ports.ModelResponse{
@@ -243,20 +256,27 @@ func (c *Client) key(ctx context.Context) (domain.Secret, error) {
 	return key, nil
 }
 
-// classify turns a provider status into a failure.
-//
-// The provider's own error text goes in Detail, never in Summary: a message
-// written for an API consumer is rarely one an operator wants to read, and it
-// can contain fragments of the request.
-func classify(status int, body []byte) *domain.Failure {
+func scrubSecret(s, secret string) string {
+	if secret == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, secret, "[redacted]")
+}
+
+// Classify turns a provider status into a failure, scrubbing secrets.
+func Classify(status int, body []byte, secret string) *domain.Failure {
+	return classify(status, body, secret)
+}
+
+func classify(status int, body []byte, secret string) *domain.Failure {
 	if status >= 200 && status < 300 {
 		return nil
 	}
 
-	detail := string(body)
+	detail := scrubSecret(string(body), secret)
 	var decoded wireResponse
 	if err := json.Unmarshal(body, &decoded); err == nil && decoded.Error != nil {
-		detail = decoded.Error.Type + ": " + decoded.Error.Message
+		detail = scrubSecret(decoded.Error.Type+": "+decoded.Error.Message, secret)
 	}
 
 	switch {
