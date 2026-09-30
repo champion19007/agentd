@@ -84,7 +84,7 @@ graph TD
 
 ```mermaid
 flowchart TD
-    Start(["Scheduled Slot Trigger"]) --> Fetch["HTTP Fetch / Subprocess Plugin"]
+    Start["Scheduled Slot Trigger"] --> Fetch["HTTP Fetch / Subprocess Plugin"]
     Fetch --> Snapshot["Compress & Hash Snapshot (zstd + SHA-256)"]
     Snapshot --> HashGate{"DOM Hash Changed?"}
     
@@ -101,13 +101,13 @@ flowchart TD
     Breakage --> OpenIncident["Open Incident State: awaiting_approval"]
     OpenIncident --> GenerateRepair["Model Generates Candidate Selector"]
     
-    GenerateRepair --> GateCheck{"Passes All 5 Verification Gates?<br/>G1 Structural &bull; G2 Shape &bull; G3 Stability<br/>G4 Independent Verify &bull; G5 Continuity"}
+    GenerateRepair --> GateCheck{"Passes All 5 Verification Gates?<br/>G1 Structural - G2 Shape - G3 Stability<br/>G4 Independent Verify - G5 Continuity"}
     
-    GateCheck -->|No (Under Budget)| RetryRepair["Next Candidate Attempt"]
+    GateCheck -->|Under Budget| RetryRepair["Next Candidate Attempt"]
     RetryRepair --> GenerateRepair
-    GateCheck -->|No (Budget Exhausted)| ManualEscalate["Incident Marked: budget_exhausted"]
+    GateCheck -->|Budget Exhausted| ManualEscalate["Incident Marked: budget_exhausted"]
     
-    GateCheck -->|Yes| Staged["Candidate Staged Awaiting Human Review"]
+    GateCheck -->|Pass| Staged["Candidate Staged Awaiting Human Review"]
     Staged --> HumanDecision{"Human Operator Signs Off?<br/>agentd repair approve --by alice"}
     
     HumanDecision -->|Approved| Activate["Activate Binding v(N+1)<br/>Record in Append-Only Audit Trail"]
