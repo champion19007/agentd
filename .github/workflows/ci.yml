@@ -74,7 +74,7 @@ jobs:
           go-version-file: go.mod
           check-latest: true
       - name: Golden Fixtures (50+ HTML scenarios)
-        run: go test -v -count=1 ./tests -run "TestFixtureCorpus"
+        run: go test -v -count=1 ./tests -run "TestFixtureCorpus|GoldenFixtureCorpus"
 
   integration:
     name: 5. Integration Pipeline
@@ -87,7 +87,7 @@ jobs:
           go-version-file: go.mod
           check-latest: true
       - name: Scripted Model Pipeline Scenarios
-        run: go test -v -count=1 ./tests -run "TestPipelineIntegration"
+        run: go test -v -count=1 ./tests -run "TestPipeline"
 
   e2e:
     name: 6. End-to-End Scenarios
@@ -115,7 +115,7 @@ jobs:
       - name: Security Hardening & Isolation
         run: go test -v -count=1 ./tests -run "TestSecurity"
       - name: Memory & Goroutine Leak Assertions
-        run: go test -v -count=1 ./tests -run "TestMemoryScale"
+        run: go test -v -count=1 ./tests -run "TestMemoryScale|MemoryScale"
 
   sbom:
     name: 8. Software Bill of Materials (SBOM)

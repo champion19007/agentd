@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -29,6 +30,12 @@ func TestUpgradeFromInitialSchema(t *testing.T) {
 	}
 
 	// Build a database at version 1 only.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		t.Fatalf("creating db file: %v", err)
+	}
+	f.Close()
+
 	raw, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)")
 	if err != nil {
 		t.Fatalf("opening: %v", err)
@@ -57,6 +64,7 @@ func TestUpgradeFromInitialSchema(t *testing.T) {
 		t.Fatalf("seeding a capture: %v", err)
 	}
 	raw.Close()
+	_ = os.Chmod(path, 0600)
 
 	// Opening applies everything outstanding.
 	store, err := Open(ctx, Options{Path: path})

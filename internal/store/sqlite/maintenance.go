@@ -224,6 +224,9 @@ func (s *Store) Backup(ctx context.Context, path string) (int64, error) {
 		return 0, fmt.Errorf("sqlite: writing backup to %q: %w", abs, err)
 	}
 
+	// Backups are valid database files and must conform to the 0600 permission policy.
+	_ = os.Chmod(abs, 0600)
+
 	info, err := os.Stat(abs)
 	if err != nil {
 		return 0, fmt.Errorf("sqlite: backup was written but cannot be read back: %w", err)

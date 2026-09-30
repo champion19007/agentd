@@ -50,13 +50,13 @@ Run the full test suite and verify 100% pass:
 go test -v -count=1 ./internal/core/...
 
 # Golden fixture corpus (50+ scenarios)
-go test -v -count=1 ./tests -run "TestFixtureCorpus"
+go test -v -count=1 ./tests -run "GoldenFixtureCorpus"
 
 # Integration and E2E pipelines
-go test -v -count=1 ./tests -run "TestPipelineIntegration|TestE2E"
+go test -v -count=1 ./tests -run "TestPipeline|TestE2E"
 
 # Security & Isolation
-go test -v -count=1 ./tests -run "TestSecurity|TestMemoryScale"
+go test -v -count=1 ./tests -run "TestSecurity|MemoryScale"
 ```
 
 ### 2. Local Cross-Compilation Test

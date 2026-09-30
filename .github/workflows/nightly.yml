@@ -19,7 +19,7 @@ jobs:
           go-version-file: go.mod
           check-latest: true
       - name: Run Repair Evaluation Harness
-        run: go test -v -count=1 ./tests -run "TestRepairEval"
+        run: go test -v -count=1 ./tests -run "TestRepairEval|RepairEvaluationHarness"
 
   soak-benchmark:
     name: 2. 12-Hour Soak Simulation
