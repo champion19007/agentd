@@ -103,7 +103,9 @@ func main() {
 		var archivePath string
 		if t.GOOS == "windows" {
 			archivePath = filepath.Join(distDir, archiveName+".zip")
-			if err := createZip(archivePath, targetBinPath, binName); err != nil {
+			batContent := []byte("@echo off\r\ntitle Agentd Web Dashboard\r\necho ======================================================\r\necho    Agentd - Autonomous Observation & Repair Daemon\r\necho ======================================================\r\necho.\r\necho Initializing local database if not already present...\r\n\"%~dp0agentd.exe\" init\r\necho.\r\necho Launching Web Dashboard in your default browser...\r\nstart http://127.0.0.1:8080/\r\necho.\r\necho Starting Agentd background server on http://127.0.0.1:8080/\r\necho (Keep this window open while using the dashboard)\r\necho Press Ctrl+C to stop the server.\r\necho.\r\n\"%~dp0agentd.exe\" serve\r\npause\r\n")
+			extras := map[string][]byte{"start-dashboard.bat": batContent}
+			if err := createZip(archivePath, targetBinPath, binName, extras); err != nil {
 				fmt.Fprintf(os.Stderr, "Error creating zip: %v\n", err)
 				os.Exit(1)
 			}
@@ -231,7 +233,7 @@ func createTarGz(tarPath, srcPath, internalName string) error {
 	return err
 }
 
-func createZip(zipPath, srcPath, internalName string) error {
+func createZip(zipPath, srcPath, internalName string, extraFiles map[string][]byte) error {
 	zipFile, err := os.Create(zipPath)
 	if err != nil {
 		return err
@@ -257,9 +259,21 @@ func createZip(zipPath, srcPath, internalName string) error {
 		return err
 	}
 
-	_, err = io.Copy(w, srcFile)
+	if _, err = io.Copy(w, srcFile); err != nil {
+		return err
+	}
+
+	for name, content := range extraFiles {
+		ew, err := zw.Create(name)
+		if err != nil {
+			return err
+		}
+		if _, err := ew.Write(content); err != nil {
+			return err
+		}
+	}
 	_ = fi
-	return err
+	return nil
 }
 
 func formatBytes(b int64) string {
