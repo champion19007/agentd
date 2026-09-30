@@ -62,7 +62,7 @@ graph TD
         Domain["Domain Invariants<br/>- Check, Run, Incident, Snapshot<br/>- Typed Intent vs Ephemeral Binding"]
         Scheduler["Scheduler Engine<br/>- Slot Computation<br/>- Jitter & DST Boundaries<br/>- Catch-Up Policies"]
         Triage["Triage Engine<br/>- Canonical DOM Hashing<br/>- 100% Model Call Gate"]
-        Harness["Repair Verification Harness<br/>- Multi-Layer Gates (G1-G5)<br/>- Candidate Generation Budget (3)<br/>- Global Circuit Breaker (>5)"]
+        Harness["Repair Verification Harness<br/>- Multi-Layer Gates (G1-G5)<br/>- Candidate Generation Budget (3)<br/>- Global Circuit Breaker (over 5 incidents)"]
     end
 
     subgraph DrivenAdapters ["Driven Adapters (Outbound)"]
@@ -84,34 +84,34 @@ graph TD
 
 ```mermaid
 flowchart TD
-    Start([Scheduled Slot Trigger]) --> Fetch[HTTP Fetch / Subprocess Plugin]
-    Fetch --> Snapshot[Compress & Hash Snapshot (zstd + SHA-256)]
-    Snapshot --> HashGate{DOM Hash Changed?}
+    Start(["Scheduled Slot Trigger"]) --> Fetch["HTTP Fetch / Subprocess Plugin"]
+    Fetch --> Snapshot["Compress & Hash Snapshot (zstd + SHA-256)"]
+    Snapshot --> HashGate{"DOM Hash Changed?"}
     
-    HashGate -- No --> Quiet[Terminal State: quiet<br/>0 Model Tokens Spent]
-    HashGate -- Yes --> Extract[Execute Active Binding Selector]
+    HashGate -->|No| Quiet["Terminal State: quiet<br/>0 Model Tokens Spent"]
+    HashGate -->|Yes| Extract["Execute Active Binding Selector"]
     
-    Extract --> ExtSuccess{Extracted Valid Value?}
+    Extract --> ExtSuccess{"Extracted Valid Value?"}
     
-    ExtSuccess -- Yes --> ContentCheck{Semantic Content Changed?}
-    ContentCheck -- No --> Quiet
-    ContentCheck -- Yes --> Changed[Terminal State: changed<br/>Emit Notification Alert]
+    ExtSuccess -->|Yes| ContentCheck{"Semantic Content Changed?"}
+    ContentCheck -->|No| Quiet
+    ContentCheck -->|Yes| Changed["Terminal State: changed<br/>Emit Notification Alert"]
     
-    ExtSuccess -- No --> Breakage[Classify Root Cause<br/>ClassStructural / ClassAuth / ClassTransport]
-    Breakage --> OpenIncident[Open Incident State: awaiting_approval]
-    OpenIncident --> GenerateRepair[Model Generates Candidate Selector]
+    ExtSuccess -->|No| Breakage["Classify Root Cause<br/>ClassStructural / ClassAuth / ClassTransport"]
+    Breakage --> OpenIncident["Open Incident State: awaiting_approval"]
+    OpenIncident --> GenerateRepair["Model Generates Candidate Selector"]
     
-    GenerateRepair --> GateCheck{Passes All 5 Verification Gates?<br/>G1 Structural | G2 Shape | G3 Stability<br/>G4 Independent Verify | G5 Continuity}
+    GenerateRepair --> GateCheck{"Passes All 5 Verification Gates?<br/>G1 Structural &bull; G2 Shape &bull; G3 Stability<br/>G4 Independent Verify &bull; G5 Continuity"}
     
-    GateCheck -- No (Budget < 3) --> RetryRepair[Next Candidate Attempt]
+    GateCheck -->|No (Under Budget)| RetryRepair["Next Candidate Attempt"]
     RetryRepair --> GenerateRepair
-    GateCheck -- No (Budget >= 3) --> ManualEscalate[Incident Marked: budget_exhausted]
+    GateCheck -->|No (Budget Exhausted)| ManualEscalate["Incident Marked: budget_exhausted"]
     
-    GateCheck -- Yes --> Staged[Candidate Staged Awaiting Human Review]
-    Staged --> HumanDecision{Human Operator Signs Off?<br/>agentd repair approve --by alice}
+    GateCheck -->|Yes| Staged["Candidate Staged Awaiting Human Review"]
+    Staged --> HumanDecision{"Human Operator Signs Off?<br/>agentd repair approve --by alice"}
     
-    HumanDecision -- Approved --> Activate[Activate Binding v(N+1)<br/>Record in Append-Only Audit Trail]
-    HumanDecision -- Rejected --> CloseIncident[Incident Closed as Rejected]
+    HumanDecision -->|Approved| Activate["Activate Binding v(N+1)<br/>Record in Append-Only Audit Trail"]
+    HumanDecision -->|Rejected| CloseIncident["Incident Closed as Rejected"]
 ```
 
 ---
